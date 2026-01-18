@@ -1,0 +1,78 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String   @id @default(uuid())
+  telegramId BigInt   @unique
+  username   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  userPrompts   UserPrompt[]
+  userResponses UserResponse[]
+  userRequests  UserRequest[]
+
+  @@map("users")
+}
+
+model Prompt {
+  id          String   @id @default(uuid())
+  topic       String
+  audioFileId String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  userPrompts UserPrompt[]
+
+  @@map("prompts")
+}
+
+model UserPrompt {
+  id       String   @id @default(uuid())
+  userId   String
+  promptId String
+  sentAt   DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id])
+  prompt Prompt @relation(fields: [promptId], references: [id])
+
+  userResponse UserResponse?
+
+  @@index([userId])
+  @@index([promptId])
+  @@map("user_prompts")
+}
+
+model UserResponse {
+  id           String   @id @default(uuid())
+  userId       String
+  userPromptId String   @unique
+  voiceFileId  String
+  transcript   String?
+  analysis     String?
+  createdAt    DateTime @default(now())
+
+  user       User       @relation(fields: [userId], references: [id])
+  userPrompt UserPrompt @relation(fields: [userPromptId], references: [id])
+
+  @@index([userId])
+  @@map("user_responses")
+}
+
+model UserRequest {
+  id        String   @id @default(uuid())
+  userId    String
+  action    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@map("user_requests")
+}
