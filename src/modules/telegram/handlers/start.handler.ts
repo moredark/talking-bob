@@ -70,12 +70,9 @@ export class StartHandler {
     await this.promptService.recordPromptSent(userId, prompt.id);
 
     try {
-      // await ctx.replyWithVoice(prompt.audioFileId, {
-      //   caption: `🎤 Тема: ${prompt.topic}\n\nПрослушай и ответь голосовым сообщением.`,
-      // });
-      await ctx.reply(
-        `🎤 Тема: ${prompt.topic}\n\nПрослушай и ответь голосовым сообщением.`,
-      );
+      await ctx.replyWithVoice(prompt.audioFileId, {
+        caption: `🎤 Тема: ${prompt.topic}\n\nПрослушай и ответь голосовым сообщением.`,
+      });
     } catch {
       await ctx.reply(
         `🎤 Тема: ${prompt.topic}\n\n` +
