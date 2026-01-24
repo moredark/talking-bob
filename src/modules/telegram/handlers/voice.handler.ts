@@ -1,15 +1,15 @@
 import { Injectable, Inject, Logger } from "@nestjs/common";
-import { Context } from "grammy";
+import { Context, InlineKeyboard } from "grammy";
 import { UserService } from "../../user";
 import { PromptService } from "../../prompt";
-import { ResponseService } from "../../response";
+import { ConversationService } from "../../conversation";
 import { RateLimitService } from "../../rate-limit";
 import {
   WHISPER_SERVICE,
   IWhisperService,
   LLM_SERVICE,
   ILLMService,
-  FeedbackResult,
+  ConversationMessage,
 } from "../../ai";
 
 @Injectable()
@@ -19,7 +19,7 @@ export class VoiceHandler {
   constructor(
     private readonly userService: UserService,
     private readonly promptService: PromptService,
-    private readonly responseService: ResponseService,
+    private readonly conversationService: ConversationService,
     private readonly rateLimitService: RateLimitService,
     @Inject(WHISPER_SERVICE)
     private readonly whisperService: IWhisperService,
@@ -64,20 +64,10 @@ export class VoiceHandler {
       return;
     }
 
-    const existingResponse =
-      await this.responseService.getResponseByUserPromptId(userPrompt.id);
-
-    if (existingResponse) {
-      await ctx.reply(
-        "Вы уже ответили на этот вопрос. Дождитесь следующего вопроса.",
-      );
-      return;
-    }
-
     const prompt = await this.promptService.getPromptById(userPrompt.promptId);
     const topic = prompt?.topic ?? "General";
 
-    await ctx.reply("⏳ Анализирую ваш ответ...");
+    const typingInterval = this.startTypingIndicator(ctx);
 
     try {
       const audioBuffer = await this.downloadVoiceFile(ctx, voice.file_id);
@@ -89,29 +79,58 @@ export class VoiceHandler {
 
       this.logger.log(`Transcript: ${transcript.substring(0, 100)}...`);
 
-      const response = await this.responseService.createResponse({
-        userId: user.id,
-        userPromptId: userPrompt.id,
-        voiceFileId: voice.file_id,
-      });
-
-      const feedback = await this.llmService.analyzeSpeech(transcript, topic);
-
-      await this.responseService.updateResponse(response.id, {
+      await this.conversationService.addMessage(
+        userPrompt.id,
+        "user",
         transcript,
-        analysis: JSON.stringify(feedback),
-      });
+        voice.file_id,
+      );
 
-      this.logger.log(`Processed voice response: ${response.id}`);
+      const existingMessages = await this.conversationService.getMessages(
+        userPrompt.id,
+      );
 
-      const formattedFeedback = this.formatFeedback(feedback, transcript);
-      await ctx.reply(formattedFeedback, { parse_mode: "HTML" });
+      const conversationHistory: ConversationMessage[] = existingMessages.map(
+        (msg) => ({
+          role: msg.role as "user" | "assistant",
+          content: msg.content,
+        }),
+      );
+
+      const followUp = await this.llmService.generateFollowUp(
+        conversationHistory,
+        topic,
+      );
+
+      await this.conversationService.addMessage(
+        userPrompt.id,
+        "assistant",
+        followUp,
+      );
+
+      clearInterval(typingInterval);
+
+      const keyboard = new InlineKeyboard().text(
+        "📊 Получить отчёт",
+        "report",
+      );
+
+      await ctx.reply(followUp, { reply_markup: keyboard });
     } catch (error) {
+      clearInterval(typingInterval);
       this.logger.error("Failed to process voice message:", error);
       await ctx.reply(
-        "😔 Произошла ошибка при анализе. Попробуйте ещё раз позже.",
+        "😔 Произошла ошибка при обработке. Попробуйте ещё раз позже.",
       );
     }
+  }
+
+  private startTypingIndicator(ctx: Context): NodeJS.Timeout {
+    const chatId = ctx.chat!.id;
+    ctx.api.sendChatAction(chatId, "typing").catch(() => {});
+    return setInterval(() => {
+      ctx.api.sendChatAction(chatId, "typing").catch(() => {});
+    }, 4000);
   }
 
   private async downloadVoiceFile(
@@ -135,45 +154,5 @@ export class VoiceHandler {
 
     const arrayBuffer = await response.arrayBuffer();
     return Buffer.from(arrayBuffer);
-  }
-
-  private formatFeedback(feedback: FeedbackResult, transcript: string): string {
-    const lines: string[] = [];
-
-    lines.push(`📝 <b>Ваш ответ:</b>`);
-    lines.push(`<i>"${transcript}"</i>`);
-    lines.push("");
-
-    lines.push(`⭐ <b>Оценка: ${feedback.overallScore}/10</b>`);
-    lines.push("");
-
-    lines.push(`💬 <b>Общий комментарий:</b>`);
-    lines.push(feedback.summary);
-
-    if (feedback.grammarErrors.length > 0) {
-      lines.push("");
-      lines.push(`📚 <b>Грамматика:</b>`);
-      feedback.grammarErrors.forEach((error) => {
-        lines.push(`• ${error}`);
-      });
-    }
-
-    if (feedback.pronunciationTips.length > 0) {
-      lines.push("");
-      lines.push(`🎤 <b>Произношение:</b>`);
-      feedback.pronunciationTips.forEach((tip) => {
-        lines.push(`• ${tip}`);
-      });
-    }
-
-    if (feedback.vocabularySuggestions.length > 0) {
-      lines.push("");
-      lines.push(`📖 <b>Словарный запас:</b>`);
-      feedback.vocabularySuggestions.forEach((suggestion) => {
-        lines.push(`• ${suggestion}`);
-      });
-    }
-
-    return lines.join("\n");
   }
 }

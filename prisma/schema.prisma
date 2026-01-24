@@ -42,11 +42,26 @@ model UserPrompt {
   user   User   @relation(fields: [userId], references: [id])
   prompt Prompt @relation(fields: [promptId], references: [id])
 
-  userResponse UserResponse?
+  userResponse          UserResponse?
+  conversationMessages  ConversationMessage[]
 
   @@index([userId])
   @@index([promptId])
   @@map("user_prompts")
+}
+
+model ConversationMessage {
+  id           String   @id @default(uuid())
+  userPromptId String
+  role         String
+  content      String
+  voiceFileId  String?
+  createdAt    DateTime @default(now())
+
+  userPrompt UserPrompt @relation(fields: [userPromptId], references: [id])
+
+  @@index([userPromptId])
+  @@map("conversation_messages")
 }
 
 model UserResponse {

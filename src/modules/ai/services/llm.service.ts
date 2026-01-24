@@ -1,5 +1,17 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { ILLMService, FeedbackResult } from "../interfaces";
+import { ILLMService, FeedbackResult, ConversationMessage } from "../interfaces";
+
+const FOLLOW_UP_SYSTEM_PROMPT = `You are a friendly English conversation partner helping a Russian speaker practice spoken English.
+Your role is to maintain a natural conversation on the given topic.
+
+Rules:
+- Speak ONLY in English
+- React naturally to what the student said
+- Ask ONE follow-up or clarifying question to keep the conversation going
+- Keep your response concise (2-3 sentences max)
+- Be encouraging but natural — like a real conversation partner
+- Do NOT correct grammar or pronunciation during the conversation
+- If the student's response is very short or unclear, gently encourage them to elaborate`;
 
 const SYSTEM_PROMPT = `You are an English language tutor helping Russian speakers improve their spoken English.
 Analyze the student's speech transcript and provide constructive feedback.
@@ -81,6 +93,62 @@ Analyze this English speech and provide feedback.`;
       return feedback;
     } catch (error) {
       this.logger.error("Speech analysis failed:", error);
+      throw error;
+    }
+  }
+
+  async generateFollowUp(
+    conversationHistory: ConversationMessage[],
+    topic: string,
+  ): Promise<string> {
+    const apiKey = process.env.CLOUD_RU_API_KEY;
+
+    if (!apiKey) {
+      throw new Error("CLOUD_RU_API_KEY is not defined");
+    }
+
+    const messages = [
+      {
+        role: "system",
+        content: `${FOLLOW_UP_SYSTEM_PROMPT}\n\nConversation topic: "${topic}"`,
+      },
+      ...conversationHistory.map((msg) => ({
+        role: msg.role === "user" ? "user" : "assistant",
+        content: msg.content,
+      })),
+    ];
+
+    try {
+      const response = await fetch(this.apiUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: this.model,
+          messages,
+          temperature: 0.8,
+          max_tokens: 300,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.error(`LLM API error: ${response.status} - ${errorText}`);
+        throw new Error(`LLM API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content;
+
+      if (!content) {
+        throw new Error("No content in LLM response");
+      }
+
+      return content.trim();
+    } catch (error) {
+      this.logger.error("Follow-up generation failed:", error);
       throw error;
     }
   }

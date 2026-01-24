@@ -7,6 +7,7 @@ export {
 export {
   ILLMService,
   FeedbackResult,
+  ConversationMessage,
   LLM_SERVICE,
 } from "./llm.interface";
 

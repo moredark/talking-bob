@@ -6,6 +6,7 @@ export {
   WHISPER_SERVICE,
   ILLMService,
   FeedbackResult,
+  ConversationMessage,
   LLM_SERVICE,
   ITTSService,
   TTSResult,
