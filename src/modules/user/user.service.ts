@@ -26,6 +26,30 @@ export class UserService {
     });
   }
 
+  async getAllUsers(): Promise<User[]> {
+    return this.prisma.user.findMany();
+  }
+
+  async updateDailyPromptSettings(
+    userId: string,
+    settings: { dailyPromptEnabled?: boolean; dailyPromptHour?: number; dailyPromptMinute?: number },
+  ): Promise<User> {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: settings,
+    });
+  }
+
+  async getUsersForDailyPrompt(hour: number, minute: number): Promise<User[]> {
+    return this.prisma.user.findMany({
+      where: {
+        dailyPromptEnabled: true,
+        dailyPromptHour: hour,
+        dailyPromptMinute: minute,
+      },
+    });
+  }
+
   async findOrCreateByTelegramId(
     telegramId: bigint,
     username?: string

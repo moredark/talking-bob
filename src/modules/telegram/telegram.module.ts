@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { TelegramService } from "./telegram.service";
-import { StartHandler, VoiceHandler, ReportHandler } from "./handlers";
+import { SchedulerService } from "./scheduler.service";
+import { StartHandler, VoiceHandler, ReportHandler, SettingsHandler } from "./handlers";
 import { UserModule } from "../user";
 import { PromptModule } from "../prompt";
 import { ResponseModule } from "../response";
@@ -17,7 +18,7 @@ import { AiModule } from "../ai";
     RateLimitModule,
     AiModule,
   ],
-  providers: [TelegramService, StartHandler, VoiceHandler, ReportHandler],
+  providers: [TelegramService, SchedulerService, StartHandler, VoiceHandler, ReportHandler, SettingsHandler],
   exports: [TelegramService],
 })
 export class TelegramModule {}

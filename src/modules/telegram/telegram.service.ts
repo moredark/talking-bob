@@ -3,6 +3,7 @@ import { Bot, Context } from "grammy";
 import { StartHandler } from "./handlers/start.handler";
 import { VoiceHandler } from "./handlers/voice.handler";
 import { ReportHandler } from "./handlers/report.handler";
+import { SettingsHandler } from "./handlers/settings.handler";
 
 @Injectable()
 export class TelegramService implements OnModuleInit {
@@ -13,6 +14,7 @@ export class TelegramService implements OnModuleInit {
     private readonly startHandler: StartHandler,
     private readonly voiceHandler: VoiceHandler,
     private readonly reportHandler: ReportHandler,
+    private readonly settingsHandler: SettingsHandler,
   ) {
     const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -31,6 +33,7 @@ export class TelegramService implements OnModuleInit {
   private registerHandlers() {
     this.bot.command("start", (ctx) => this.startHandler.handle(ctx));
     this.bot.command("report", (ctx) => this.reportHandler.handle(ctx));
+    this.bot.command("settings", (ctx) => this.settingsHandler.handle(ctx));
 
     this.bot.on("message:voice", (ctx) => this.voiceHandler.handle(ctx));
 
@@ -44,6 +47,16 @@ export class TelegramService implements OnModuleInit {
       await this.startHandler.handle(ctx);
     });
 
+    this.bot.callbackQuery("toggle_daily", async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.settingsHandler.handleToggle(ctx);
+    });
+
+    this.bot.callbackQuery(/^set_time_\d+_\d+$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.settingsHandler.handleTimeSelect(ctx, ctx.callbackQuery.data);
+    });
+
     this.bot.catch((err) => {
       this.logger.error("Bot error:", err);
     });
@@ -55,6 +68,7 @@ export class TelegramService implements OnModuleInit {
     await this.bot.api.setMyCommands([
       { command: "start", description: "Начать / Новый вопрос" },
       { command: "report", description: "Получить отчёт по разговору" },
+      { command: "settings", description: "Настройки ежедневного вопроса" },
     ]);
 
     this.bot.start();
