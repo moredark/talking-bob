@@ -8,19 +8,23 @@ datasource db {
 }
 
 model User {
-  id                 String   @id @default(uuid())
-  telegramId         BigInt   @unique
+  id                 String    @id @default(uuid())
+  telegramId         BigInt    @unique
   username           String?
-  dailyPromptEnabled Boolean  @default(true)
-  dailyPromptHour    Int      @default(13)
-  dailyPromptMinute  Int      @default(0)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  dailyPromptEnabled Boolean   @default(true)
+  dailyPromptHour    Int       @default(13)
+  dailyPromptMinute  Int       @default(0)
+  timezone           String    @default("Europe/Moscow")
+  lastPromptSentAt   DateTime?
+  nextPromptAt       DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   userPrompts   UserPrompt[]
   userResponses UserResponse[]
   userRequests  UserRequest[]
 
+  @@index([nextPromptAt])
   @@map("users")
 }
 

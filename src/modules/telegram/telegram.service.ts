@@ -4,6 +4,7 @@ import { StartHandler } from "./handlers/start.handler";
 import { VoiceHandler } from "./handlers/voice.handler";
 import { ReportHandler } from "./handlers/report.handler";
 import { SettingsHandler } from "./handlers/settings.handler";
+import { DailyPromptDispatcher } from "../schedule";
 
 @Injectable()
 export class TelegramService implements OnModuleInit {
@@ -15,6 +16,7 @@ export class TelegramService implements OnModuleInit {
     private readonly voiceHandler: VoiceHandler,
     private readonly reportHandler: ReportHandler,
     private readonly settingsHandler: SettingsHandler,
+    private readonly dailyPromptDispatcher: DailyPromptDispatcher,
   ) {
     const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -27,6 +29,7 @@ export class TelegramService implements OnModuleInit {
 
   async onModuleInit() {
     this.registerHandlers();
+    this.dailyPromptDispatcher.setBot(this.bot);
     await this.startBot();
   }
 

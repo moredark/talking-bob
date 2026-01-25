@@ -150,14 +150,6 @@ export class ReportHandler {
       });
     }
 
-    if (feedback.pronunciationTips.length > 0) {
-      lines.push("");
-      lines.push(`🎤 <b>Произношение:</b>`);
-      feedback.pronunciationTips.forEach((tip) => {
-        lines.push(`• ${tip}`);
-      });
-    }
-
     if (feedback.vocabularySuggestions.length > 0) {
       lines.push("");
       lines.push(`📖 <b>Словарный запас:</b>`);

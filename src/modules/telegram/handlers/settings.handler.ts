@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Context, InlineKeyboard } from "grammy";
 import { UserService } from "../../user";
+import { ScheduleService } from "../../schedule";
 
 const TIME_OPTIONS = [
   { label: "09:00", hour: 9, minute: 0 },
@@ -11,11 +12,16 @@ const TIME_OPTIONS = [
   { label: "21:00", hour: 21, minute: 0 },
 ];
 
+const DEFAULT_TIMEZONE = "Europe/Moscow";
+
 @Injectable()
 export class SettingsHandler {
   private readonly logger = new Logger(SettingsHandler.name);
 
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    private readonly scheduleService: ScheduleService,
+  ) {}
 
   async handle(ctx: Context): Promise<void> {
     const telegramId = ctx.from?.id;
@@ -44,9 +50,14 @@ export class SettingsHandler {
     const user = await this.userService.findByTelegramId(BigInt(telegramId));
     if (!user) return;
 
-    const updated = await this.userService.updateDailyPromptSettings(user.id, {
-      dailyPromptEnabled: !user.dailyPromptEnabled,
-    });
+    if (user.dailyPromptEnabled) {
+      await this.scheduleService.disableSchedule(user.id);
+    } else {
+      await this.scheduleService.enableSchedule(user.id);
+    }
+
+    const updated = await this.userService.findByTelegramId(BigInt(telegramId));
+    if (!updated) return;
 
     await this.editSettings(ctx, updated.dailyPromptEnabled, updated.dailyPromptHour, updated.dailyPromptMinute);
   }
@@ -65,10 +76,15 @@ export class SettingsHandler {
     const hour = parseInt(hourStr, 10);
     const minute = parseInt(minuteStr, 10);
 
-    const updated = await this.userService.updateDailyPromptSettings(user.id, {
-      dailyPromptHour: hour,
-      dailyPromptMinute: minute,
-    });
+    await this.scheduleService.initializeSchedule(
+      user.id,
+      hour,
+      minute,
+      user.timezone || DEFAULT_TIMEZONE,
+    );
+
+    const updated = await this.userService.findByTelegramId(BigInt(telegramId));
+    if (!updated) return;
 
     await this.editSettings(ctx, updated.dailyPromptEnabled, updated.dailyPromptHour, updated.dailyPromptMinute);
   }

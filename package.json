@@ -19,6 +19,7 @@
   "dependencies": {
     "@nestjs/common": "^11.1.12",
     "@nestjs/core": "^11.1.12",
+    "@nestjs/schedule": "^6.1.0",
     "@prisma/client": "^6.19.2",
     "dotenv": "^17.2.3",
     "form-data": "^4.0.5",
