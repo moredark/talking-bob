@@ -1,5 +1,9 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { ILLMService, FeedbackResult, ConversationMessage } from "../interfaces";
+import {
+  ILLMService,
+  FeedbackResult,
+  ConversationMessage,
+} from "../interfaces";
 
 const FOLLOW_UP_SYSTEM_PROMPT = `You are a friendly English conversation partner helping a Russian speaker practice spoken English.
 Your role is to maintain a natural conversation on the given topic.
@@ -22,7 +26,6 @@ Return your analysis as a valid JSON object with this exact structure:
 {
   "summary": "Brief overall assessment in Russian (1-2 sentences)",
   "grammarErrors": ["List of grammar mistakes found, explained in Russian"],
-  "pronunciationTips": ["Pronunciation suggestions in Russian"],
   "vocabularySuggestions": ["Better word choices or expressions in Russian"],
   "overallScore": 7
 }
@@ -42,7 +45,7 @@ export class LLMService implements ILLMService {
   async analyzeSpeech(
     transcript: string,
     topic: string,
-    targetLanguage: string = "en"
+    targetLanguage: string = "en",
   ): Promise<FeedbackResult> {
     const apiKey = process.env.CLOUD_RU_API_KEY;
 
@@ -165,7 +168,6 @@ Analyze this English speech and provide feedback.`;
       return {
         summary: parsed.summary || "Анализ недоступен",
         grammarErrors: parsed.grammarErrors || [],
-        pronunciationTips: parsed.pronunciationTips || [],
         vocabularySuggestions: parsed.vocabularySuggestions || [],
         overallScore: Math.min(10, Math.max(1, parsed.overallScore || 5)),
       };
@@ -174,7 +176,6 @@ Analyze this English speech and provide feedback.`;
       return {
         summary: content.substring(0, 200),
         grammarErrors: [],
-        pronunciationTips: [],
         vocabularySuggestions: [],
         overallScore: 5,
       };
