@@ -79,6 +79,16 @@ export class ReportHandler {
     const prompt = await this.promptService.getPromptById(userPrompt.promptId);
     const topic = prompt?.topic ?? "General";
 
+    await this.generateReport(ctx, user.id, userPrompt.id, topic, userMessages);
+  }
+
+  async generateReport(
+    ctx: Context,
+    userId: string,
+    userPromptId: string,
+    topic: string,
+    userMessages: Array<{ content: string; voiceFileId: string | null }>,
+  ): Promise<void> {
     const typingInterval = this.startTypingIndicator(ctx);
 
     try {
@@ -89,8 +99,8 @@ export class ReportHandler {
       const feedback = await this.llmService.analyzeSpeech(fullTranscript, topic);
 
       const response = await this.responseService.createResponse({
-        userId: user.id,
-        userPromptId: userPrompt.id,
+        userId,
+        userPromptId,
         voiceFileId: userMessages[0].voiceFileId || "",
       });
 

@@ -1,4 +1,4 @@
-import { Injectable, Inject, Logger } from "@nestjs/common";
+import { Injectable, Inject, Logger, forwardRef } from "@nestjs/common";
 import { Context, InlineKeyboard } from "grammy";
 import { UserService } from "../../user";
 import { PromptService } from "../../prompt";
@@ -11,6 +11,9 @@ import {
   ILLMService,
   ConversationMessage,
 } from "../../ai";
+import { ReportHandler } from "./report.handler";
+
+const AUTO_REPORT_AFTER_MESSAGES = 3;
 
 @Injectable()
 export class VoiceHandler {
@@ -25,6 +28,8 @@ export class VoiceHandler {
     private readonly whisperService: IWhisperService,
     @Inject(LLM_SERVICE)
     private readonly llmService: ILLMService,
+    @Inject(forwardRef(() => ReportHandler))
+    private readonly reportHandler: ReportHandler,
   ) {}
 
   async handle(ctx: Context): Promise<void> {
@@ -89,6 +94,26 @@ export class VoiceHandler {
       const existingMessages = await this.conversationService.getMessages(
         userPrompt.id,
       );
+
+      const userMessages = existingMessages.filter((m) => m.role === "user");
+
+      if (userMessages.length >= AUTO_REPORT_AFTER_MESSAGES) {
+        clearInterval(typingInterval);
+
+        const formattedUserMessages = userMessages.map((m) => ({
+          content: m.content,
+          voiceFileId: m.voiceFileId,
+        }));
+
+        await this.reportHandler.generateReport(
+          ctx,
+          user.id,
+          userPrompt.id,
+          topic,
+          formattedUserMessages,
+        );
+        return;
+      }
 
       const conversationHistory: ConversationMessage[] = existingMessages.map(
         (msg) => ({
