@@ -69,14 +69,20 @@ export class StartHandler {
 
     await this.promptService.recordPromptSent(userId, prompt.id);
 
-    try {
-      await ctx.replyWithVoice(prompt.audioFileId, {
-        caption: `🎤 Тема: ${prompt.topic}\n\nПрослушай и ответь голосовым сообщением.`,
-      });
-    } catch {
+    if (prompt.audioFileId) {
+      try {
+        await ctx.replyWithVoice(prompt.audioFileId, {
+          caption: `🎤 Тема: ${prompt.topic}\n\nПрослушай и ответь голосовым сообщением.`,
+        });
+      } catch {
+        await ctx.reply(
+          `🎤 Тема: ${prompt.topic}\n\n` +
+            `Ответь голосовым сообщением на английском.`,
+        );
+      }
+    } else {
       await ctx.reply(
         `🎤 Тема: ${prompt.topic}\n\n` +
-          `(Голосовое сообщение недоступно — используется текстовый режим)\n\n` +
           `Ответь голосовым сообщением на английском.`,
       );
     }
