@@ -1,5 +1,5 @@
 import { Injectable, Inject, Logger, forwardRef } from "@nestjs/common";
-import { Context, InlineKeyboard } from "grammy";
+import { Context, InlineKeyboard, InputFile } from "grammy";
 import { UserService } from "../../user";
 import { PromptService } from "../../prompt";
 import { ConversationService } from "../../conversation";
@@ -9,6 +9,8 @@ import {
   IWhisperService,
   LLM_SERVICE,
   ILLMService,
+  TTS_SERVICE,
+  ITTSService,
   ConversationMessage,
 } from "../../ai";
 import { ReportHandler } from "./report.handler";
@@ -28,6 +30,8 @@ export class VoiceHandler {
     private readonly whisperService: IWhisperService,
     @Inject(LLM_SERVICE)
     private readonly llmService: ILLMService,
+    @Inject(TTS_SERVICE)
+    private readonly ttsService: ITTSService,
     @Inject(forwardRef(() => ReportHandler))
     private readonly reportHandler: ReportHandler,
   ) {}
@@ -140,7 +144,15 @@ export class VoiceHandler {
         "report",
       );
 
-      await ctx.reply(followUp, { reply_markup: keyboard });
+      try {
+        const { audioBuffer } = await this.ttsService.synthesize(followUp, "en");
+        await ctx.replyWithVoice(new InputFile(audioBuffer, "response.mp3"), {
+          reply_markup: keyboard,
+        });
+      } catch (ttsError) {
+        this.logger.warn("TTS failed, falling back to text:", ttsError);
+        await ctx.reply(followUp, { reply_markup: keyboard });
+      }
     } catch (error) {
       clearInterval(typingInterval);
       this.logger.error("Failed to process voice message:", error);
