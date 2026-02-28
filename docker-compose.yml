@@ -1,10 +1,10 @@
-version: "3.9"
-
 services:
   db:
     image: postgres:16
     restart: always
     env_file: .env
+    ports:
+      - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
 
@@ -12,6 +12,8 @@ services:
     build: .
     restart: always
     env_file: .env
+    ports:
+      - "3000:3000"
     environment:
       DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
     depends_on:

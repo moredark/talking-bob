@@ -17,6 +17,10 @@ model User {
   timezone           String    @default("Europe/Moscow")
   lastPromptSentAt   DateTime?
   nextPromptAt       DateTime?
+  languageLevel      String?
+  status             String    @default("active")
+  bannedAt           DateTime?
+  bannedReason       String?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
@@ -31,8 +35,12 @@ model User {
 model Prompt {
   id          String   @id @default(uuid())
   topic       String
+  textContent String?
   audioFileId String
+  difficulty  String   @default("medium")
+  tags        String[] @default([])
   isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
   createdAt   DateTime @default(now())
 
   userPrompts UserPrompt[]
@@ -97,4 +105,29 @@ model UserRequest {
 
   @@index([userId, createdAt])
   @@map("user_requests")
+}
+
+model AdminUser {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  @@map("admin_users")
+}
+
+model ErrorLog {
+  id        String   @id @default(uuid())
+  type      String
+  service   String
+  message   String
+  stack     String?
+  metadata  Json?
+  userId    String?
+  createdAt DateTime @default(now())
+
+  @@index([type])
+  @@index([service])
+  @@index([createdAt])
+  @@map("error_logs")
 }
