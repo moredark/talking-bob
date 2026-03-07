@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { Context, InlineKeyboard } from "grammy";
 import { UserService } from "../../user";
 import { ScheduleService } from "../../schedule";
+import { AgentTone } from "../../ai";
 
 const TIME_OPTIONS = [
   { label: "09:00", hour: 9, minute: 0 },
@@ -37,7 +38,13 @@ export class SettingsHandler {
       return;
     }
 
-    await this.showSettings(ctx, user.dailyPromptEnabled, user.dailyPromptHour, user.dailyPromptMinute);
+    await this.showSettings(
+      ctx,
+      user.dailyPromptEnabled,
+      user.dailyPromptHour,
+      user.dailyPromptMinute,
+      this.normalizeTone(user.agentTone),
+    );
   }
 
   async handleToggle(ctx: Context): Promise<void> {
@@ -59,7 +66,13 @@ export class SettingsHandler {
     const updated = await this.userService.findByTelegramId(BigInt(telegramId));
     if (!updated) return;
 
-    await this.editSettings(ctx, updated.dailyPromptEnabled, updated.dailyPromptHour, updated.dailyPromptMinute);
+    await this.editSettings(
+      ctx,
+      updated.dailyPromptEnabled,
+      updated.dailyPromptHour,
+      updated.dailyPromptMinute,
+      this.normalizeTone(updated.agentTone),
+    );
   }
 
   async handleTimeSelect(ctx: Context, data: string): Promise<void> {
@@ -86,7 +99,40 @@ export class SettingsHandler {
     const updated = await this.userService.findByTelegramId(BigInt(telegramId));
     if (!updated) return;
 
-    await this.editSettings(ctx, updated.dailyPromptEnabled, updated.dailyPromptHour, updated.dailyPromptMinute);
+    await this.editSettings(
+      ctx,
+      updated.dailyPromptEnabled,
+      updated.dailyPromptHour,
+      updated.dailyPromptMinute,
+      this.normalizeTone(updated.agentTone),
+    );
+  }
+
+  async handleToneSelect(ctx: Context, data: string): Promise<void> {
+    const telegramId = ctx.from?.id;
+
+    if (!telegramId) {
+      return;
+    }
+
+    const user = await this.userService.findByTelegramId(BigInt(telegramId));
+    if (!user) return;
+
+    const toneRaw = data.replace("set_tone_", "");
+    const tone: AgentTone = toneRaw === "playful" ? "playful" : "friendly";
+
+    await this.userService.updateAgentTone(user.id, tone);
+
+    const updated = await this.userService.findByTelegramId(BigInt(telegramId));
+    if (!updated) return;
+
+    await this.editSettings(
+      ctx,
+      updated.dailyPromptEnabled,
+      updated.dailyPromptHour,
+      updated.dailyPromptMinute,
+      this.normalizeTone(updated.agentTone),
+    );
   }
 
   private async showSettings(
@@ -94,9 +140,10 @@ export class SettingsHandler {
     enabled: boolean,
     hour: number,
     minute: number,
+    tone: AgentTone,
   ): Promise<void> {
-    const text = this.formatSettingsText(enabled, hour, minute);
-    const keyboard = this.buildKeyboard(enabled);
+    const text = this.formatSettingsText(enabled, hour, minute, tone);
+    const keyboard = this.buildKeyboard(enabled, tone);
     await ctx.reply(text, { reply_markup: keyboard, parse_mode: "HTML" });
   }
 
@@ -105,9 +152,10 @@ export class SettingsHandler {
     enabled: boolean,
     hour: number,
     minute: number,
+    tone: AgentTone,
   ): Promise<void> {
-    const text = this.formatSettingsText(enabled, hour, minute);
-    const keyboard = this.buildKeyboard(enabled);
+    const text = this.formatSettingsText(enabled, hour, minute, tone);
+    const keyboard = this.buildKeyboard(enabled, tone);
 
     try {
       await ctx.editMessageText(text, { reply_markup: keyboard, parse_mode: "HTML" });
@@ -116,18 +164,28 @@ export class SettingsHandler {
     }
   }
 
-  private formatSettingsText(enabled: boolean, hour: number, minute: number): string {
+  private formatSettingsText(
+    enabled: boolean,
+    hour: number,
+    minute: number,
+    tone: AgentTone,
+  ): string {
     const status = enabled ? "включена" : "выключена";
     const time = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+    const toneLabel =
+      tone === "playful"
+        ? "Шутливый/дерзкий (сленг и неформальная речь ок)"
+        : "Дружелюбный учитель";
 
     return (
-      `<b>Настройки ежедневного вопроса</b>\n\n` +
+      `<b>Настройки</b>\n\n` +
       `Рассылка: <b>${status}</b>\n` +
-      `Время (МСК): <b>${time}</b>`
+      `Время (МСК): <b>${time}</b>\n` +
+      `Тон агента: <b>${toneLabel}</b>`
     );
   }
 
-  private buildKeyboard(enabled: boolean): InlineKeyboard {
+  private buildKeyboard(enabled: boolean, tone: AgentTone): InlineKeyboard {
     const keyboard = new InlineKeyboard();
 
     keyboard.text(
@@ -142,6 +200,20 @@ export class SettingsHandler {
       if (i % 3 === 2) keyboard.row();
     }
 
+    keyboard.row();
+    keyboard.text(
+      tone === "friendly" ? "✅ Дружелюбный" : "🙂 Дружелюбный",
+      "set_tone_friendly",
+    );
+    keyboard.text(
+      tone === "playful" ? "✅ Шутливый" : "😈 Шутливый",
+      "set_tone_playful",
+    );
+
     return keyboard;
+  }
+
+  private normalizeTone(tone: string | null | undefined): AgentTone {
+    return tone === "playful" ? "playful" : "friendly";
   }
 }

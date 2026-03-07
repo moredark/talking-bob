@@ -15,6 +15,7 @@ model User {
   dailyPromptHour    Int       @default(13)
   dailyPromptMinute  Int       @default(0)
   timezone           String    @default("Europe/Moscow")
+  agentTone          String    @default("friendly")
   lastPromptSentAt   DateTime?
   nextPromptAt       DateTime?
   languageLevel      String?

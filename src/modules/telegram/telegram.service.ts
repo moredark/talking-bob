@@ -60,6 +60,11 @@ export class TelegramService implements OnModuleInit {
       await this.settingsHandler.handleTimeSelect(ctx, ctx.callbackQuery.data);
     });
 
+    this.bot.callbackQuery(/^set_tone_(friendly|playful)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.settingsHandler.handleToneSelect(ctx, ctx.callbackQuery.data);
+    });
+
     this.bot.catch((err) => {
       this.logger.error("Bot error:", err);
     });

@@ -5,6 +5,7 @@ export {
   TranscriptionResult,
   WHISPER_SERVICE,
   ILLMService,
+  AgentTone,
   FeedbackResult,
   ConversationMessage,
   LLM_SERVICE,

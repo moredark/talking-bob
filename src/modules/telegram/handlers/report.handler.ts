@@ -9,6 +9,7 @@ import {
   LLM_SERVICE,
   ILLMService,
   FeedbackResult,
+  AgentTone,
 } from "../../ai";
 
 @Injectable()
@@ -78,8 +79,17 @@ export class ReportHandler {
 
     const prompt = await this.promptService.getPromptById(userPrompt.promptId);
     const topic = prompt?.topic ?? "General";
+    const tone: AgentTone =
+      user.agentTone === "playful" ? "playful" : "friendly";
 
-    await this.generateReport(ctx, user.id, userPrompt.id, topic, userMessages);
+    await this.generateReport(
+      ctx,
+      user.id,
+      userPrompt.id,
+      topic,
+      userMessages,
+      tone,
+    );
   }
 
   async generateReport(
@@ -88,6 +98,7 @@ export class ReportHandler {
     userPromptId: string,
     topic: string,
     userMessages: Array<{ content: string; voiceFileId: string | null }>,
+    tone: AgentTone = "friendly",
   ): Promise<void> {
     const typingInterval = this.startTypingIndicator(ctx);
 
@@ -96,7 +107,12 @@ export class ReportHandler {
         .map((m) => m.content)
         .join(" ");
 
-      const feedback = await this.llmService.analyzeSpeech(fullTranscript, topic);
+      const feedback = await this.llmService.analyzeSpeech(
+        fullTranscript,
+        topic,
+        "en",
+        tone,
+      );
 
       const response = await this.responseService.createResponse({
         userId,
@@ -149,22 +165,14 @@ export class ReportHandler {
     lines.push(`⭐ <b>Оценка: ${feedback.overallScore}/10</b>`);
     lines.push("");
 
-    lines.push(`💬 <b>Общий комментарий:</b>`);
+    lines.push(`💬 <b>Комментарий:</b>`);
     lines.push(feedback.summary);
 
-    if (feedback.grammarErrors.length > 0) {
+    if (feedback.improvementPoints.length > 0) {
       lines.push("");
-      lines.push(`📚 <b>Грамматика:</b>`);
-      feedback.grammarErrors.forEach((error) => {
-        lines.push(`• ${error}`);
-      });
-    }
-
-    if (feedback.vocabularySuggestions.length > 0) {
-      lines.push("");
-      lines.push(`📖 <b>Словарный запас:</b>`);
-      feedback.vocabularySuggestions.forEach((suggestion) => {
-        lines.push(`• ${suggestion}`);
+      lines.push(`📌 <b>Разбор ошибок и улучшений:</b>`);
+      feedback.improvementPoints.forEach((point) => {
+        lines.push(`• ${point}`);
       });
     }
 

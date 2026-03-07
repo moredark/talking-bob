@@ -1,7 +1,8 @@
+export type AgentTone = "friendly" | "playful";
+
 export interface FeedbackResult {
   summary: string;
-  grammarErrors: string[];
-  vocabularySuggestions: string[];
+  improvementPoints: string[];
   overallScore: number;
 }
 
@@ -15,11 +16,13 @@ export interface ILLMService {
     transcript: string,
     topic: string,
     targetLanguage?: string,
+    tone?: AgentTone,
   ): Promise<FeedbackResult>;
 
   generateFollowUp(
     conversationHistory: ConversationMessage[],
     topic: string,
+    tone?: AgentTone,
   ): Promise<string>;
 }
 

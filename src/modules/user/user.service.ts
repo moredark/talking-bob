@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { User } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database";
+import type { AgentTone } from "../ai";
 
 export interface CreateUserData {
   telegramId: bigint;
@@ -37,6 +38,13 @@ export class UserService {
     return this.prisma.user.update({
       where: { id: userId },
       data: settings,
+    });
+  }
+
+  async updateAgentTone(userId: string, tone: AgentTone): Promise<User> {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { agentTone: tone },
     });
   }
 

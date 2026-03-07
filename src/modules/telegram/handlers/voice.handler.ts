@@ -10,6 +10,7 @@ import {
   LLM_SERVICE,
   ILLMService,
   ConversationMessage,
+  AgentTone,
 } from "../../ai";
 import { ReportHandler } from "./report.handler";
 
@@ -71,6 +72,8 @@ export class VoiceHandler {
 
     const prompt = await this.promptService.getPromptById(userPrompt.promptId);
     const topic = prompt?.topic ?? "General";
+    const tone: AgentTone =
+      user.agentTone === "playful" ? "playful" : "friendly";
 
     const typingInterval = this.startTypingIndicator(ctx);
 
@@ -111,6 +114,7 @@ export class VoiceHandler {
           userPrompt.id,
           topic,
           formattedUserMessages,
+          tone,
         );
         return;
       }
@@ -125,6 +129,7 @@ export class VoiceHandler {
       const followUp = await this.llmService.generateFollowUp(
         conversationHistory,
         topic,
+        tone,
       );
 
       await this.conversationService.addMessage(

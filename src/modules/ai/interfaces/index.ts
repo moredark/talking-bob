@@ -5,6 +5,7 @@ export {
 } from "./whisper.interface";
 
 export {
+  AgentTone,
   ILLMService,
   FeedbackResult,
   ConversationMessage,
