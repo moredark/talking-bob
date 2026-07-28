@@ -8,10 +8,12 @@
     "start": "node dist/main.js",
     "start:dev": "tsc --watch & node --watch dist/main.js",
     "start:prod": "node dist/main.js",
+    "test": "npm run build && node --test",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
-    "prisma:seed": "ts-node prisma/seed.ts"
+    "prisma:seed": "ts-node prisma/seed.ts",
+    "deploy:init": "npm run prisma:migrate:deploy && npm run prisma:seed"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

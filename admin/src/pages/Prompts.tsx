@@ -119,7 +119,7 @@ export function Prompts() {
         const updateData: UpdatePromptDto = {
           topic: values.topic,
           textContent: values.textContent || undefined,
-          audioFileId: values.audioFileId,
+          audioFileId: values.audioFileId?.trim() || null,
           difficulty: values.difficulty,
           tags: values.tags,
           isActive: values.isActive,
@@ -131,7 +131,7 @@ export function Prompts() {
         const createData: CreatePromptDto = {
           topic: values.topic,
           textContent: values.textContent || undefined,
-          audioFileId: values.audioFileId,
+          audioFileId: values.audioFileId?.trim() || null,
           difficulty: values.difficulty,
           tags: values.tags,
           isActive: values.isActive,
@@ -313,12 +313,8 @@ export function Prompts() {
             />
           </Form.Item>
 
-          <Form.Item
-            name="audioFileId"
-            label="Audio File ID"
-            rules={[{ required: true, message: "Введите Audio File ID" }]}
-          >
-            <Input placeholder="Telegram Audio File ID" />
+          <Form.Item name="audioFileId" label="Audio File ID">
+            <Input placeholder="Telegram Audio File ID (необязательно)" />
           </Form.Item>
 
           <Form.Item name="difficulty" label="Сложность">

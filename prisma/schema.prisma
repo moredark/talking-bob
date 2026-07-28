@@ -37,7 +37,7 @@ model Prompt {
   id          String   @id @default(uuid())
   topic       String
   textContent String?
-  audioFileId String
+  audioFileId String?
   difficulty  String   @default("medium")
   tags        String[] @default([])
   isActive    Boolean  @default(true)

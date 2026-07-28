@@ -41,12 +41,18 @@ export class DailyPromptDispatcher implements IMessageDispatcher {
 
       const chatId = Number(user.telegramId);
 
-      try {
-        await this.bot.api.sendVoice(chatId, prompt.audioFileId, {
-          caption: `🎤 Тема дня: ${prompt.topic}\n\nПрослушай и ответь голосовым сообщением.`,
-        });
-      } catch {
-        // Fallback to text message if voice fails
+      if (prompt.audioFileId) {
+        try {
+          await this.bot.api.sendVoice(chatId, prompt.audioFileId, {
+            caption: `🎤 Тема дня: ${prompt.topic}\n\nПрослушай и ответь голосовым сообщением.`,
+          });
+        } catch {
+          await this.bot.api.sendMessage(
+            chatId,
+            `🎤 Тема дня: ${prompt.topic}\n\nОтветь голосовым сообщением на английском.`,
+          );
+        }
+      } else {
         await this.bot.api.sendMessage(
           chatId,
           `🎤 Тема дня: ${prompt.topic}\n\nОтветь голосовым сообщением на английском.`,

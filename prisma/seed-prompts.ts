@@ -1,150 +1,148 @@
 import { PrismaClient } from "@prisma/client";
 
-const prisma = new PrismaClient();
-
 const prompts = [
   // Personal Introduction & Background (1-10)
-  { topic: "Introduce yourself", audioFileId: "" },
-  { topic: "Tell me about your family", audioFileId: "" },
-  { topic: "Where are you from? Describe your hometown", audioFileId: "" },
-  { topic: "What do you do for a living?", audioFileId: "" },
-  { topic: "Describe your best friend", audioFileId: "" },
-  { topic: "What are your strengths and weaknesses?", audioFileId: "" },
-  { topic: "Tell me about your childhood", audioFileId: "" },
-  { topic: "What languages do you speak?", audioFileId: "" },
-  { topic: "Describe your personality", audioFileId: "" },
-  { topic: "What makes you unique?", audioFileId: "" },
+  { topic: "Introduce yourself" },
+  { topic: "Tell me about your family" },
+  { topic: "Where are you from? Describe your hometown" },
+  { topic: "What do you do for a living?" },
+  { topic: "Describe your best friend" },
+  { topic: "What are your strengths and weaknesses?" },
+  { topic: "Tell me about your childhood" },
+  { topic: "What languages do you speak?" },
+  { topic: "Describe your personality" },
+  { topic: "What makes you unique?" },
 
   // Daily Life & Routines (11-20)
-  { topic: "Describe your daily routine", audioFileId: "" },
-  { topic: "What do you usually have for breakfast?", audioFileId: "" },
-  { topic: "How do you get to work or school?", audioFileId: "" },
-  { topic: "What does your typical weekend look like?", audioFileId: "" },
-  { topic: "Describe your morning routine", audioFileId: "" },
-  { topic: "What do you do before going to bed?", audioFileId: "" },
-  { topic: "How do you spend your lunch break?", audioFileId: "" },
-  { topic: "What household chores do you do?", audioFileId: "" },
-  { topic: "Describe a typical Monday for you", audioFileId: "" },
-  { topic: "How has your routine changed over the years?", audioFileId: "" },
+  { topic: "Describe your daily routine" },
+  { topic: "What do you usually have for breakfast?" },
+  { topic: "How do you get to work or school?" },
+  { topic: "What does your typical weekend look like?" },
+  { topic: "Describe your morning routine" },
+  { topic: "What do you do before going to bed?" },
+  { topic: "How do you spend your lunch break?" },
+  { topic: "What household chores do you do?" },
+  { topic: "Describe a typical Monday for you" },
+  { topic: "How has your routine changed over the years?" },
 
   // Hobbies & Interests (21-30)
-  { topic: "Talk about your hobbies", audioFileId: "" },
-  { topic: "What do you like to do in your free time?", audioFileId: "" },
-  { topic: "Do you have any unusual hobbies?", audioFileId: "" },
-  { topic: "What hobby would you like to try?", audioFileId: "" },
-  { topic: "Tell me about a skill you learned recently", audioFileId: "" },
-  { topic: "What sports do you enjoy?", audioFileId: "" },
-  { topic: "Do you play any musical instruments?", audioFileId: "" },
-  { topic: "What games do you like to play?", audioFileId: "" },
-  { topic: "Tell me about your favorite book", audioFileId: "" },
-  { topic: "What kind of music do you listen to?", audioFileId: "" },
+  { topic: "Talk about your hobbies" },
+  { topic: "What do you like to do in your free time?" },
+  { topic: "Do you have any unusual hobbies?" },
+  { topic: "What hobby would you like to try?" },
+  { topic: "Tell me about a skill you learned recently" },
+  { topic: "What sports do you enjoy?" },
+  { topic: "Do you play any musical instruments?" },
+  { topic: "What games do you like to play?" },
+  { topic: "Tell me about your favorite book" },
+  { topic: "What kind of music do you listen to?" },
 
   // Travel & Places (31-40)
-  { topic: "Describe your favorite place", audioFileId: "" },
-  { topic: "What was your best vacation?", audioFileId: "" },
-  { topic: "Where would you like to travel?", audioFileId: "" },
-  { topic: "Describe a memorable trip you took", audioFileId: "" },
-  { topic: "What country would you like to visit and why?", audioFileId: "" },
-  { topic: "Do you prefer beach or mountain vacations?", audioFileId: "" },
-  { topic: "Describe a place you visited that surprised you", audioFileId: "" },
-  { topic: "What do you like to do when traveling?", audioFileId: "" },
-  { topic: "Tell me about a road trip you took", audioFileId: "" },
-  { topic: "Describe the most beautiful place you have seen", audioFileId: "" },
+  { topic: "Describe your favorite place" },
+  { topic: "What was your best vacation?" },
+  { topic: "Where would you like to travel?" },
+  { topic: "Describe a memorable trip you took" },
+  { topic: "What country would you like to visit and why?" },
+  { topic: "Do you prefer beach or mountain vacations?" },
+  { topic: "Describe a place you visited that surprised you" },
+  { topic: "What do you like to do when traveling?" },
+  { topic: "Tell me about a road trip you took" },
+  { topic: "Describe the most beautiful place you have seen" },
 
   // Past Experiences (41-50)
-  { topic: "What did you do last weekend?", audioFileId: "" },
-  { topic: "Tell me about your last birthday", audioFileId: "" },
-  { topic: "Describe a challenge you overcame", audioFileId: "" },
-  { topic: "What was your most embarrassing moment?", audioFileId: "" },
-  { topic: "Tell me about a time you helped someone", audioFileId: "" },
-  { topic: "Describe your first job", audioFileId: "" },
-  { topic: "What was the best gift you ever received?", audioFileId: "" },
-  { topic: "Tell me about a concert or event you attended", audioFileId: "" },
-  { topic: "Describe a difficult decision you made", audioFileId: "" },
-  { topic: "What was your favorite school subject and why?", audioFileId: "" },
+  { topic: "What did you do last weekend?" },
+  { topic: "Tell me about your last birthday" },
+  { topic: "Describe a challenge you overcame" },
+  { topic: "What was your most embarrassing moment?" },
+  { topic: "Tell me about a time you helped someone" },
+  { topic: "Describe your first job" },
+  { topic: "What was the best gift you ever received?" },
+  { topic: "Tell me about a concert or event you attended" },
+  { topic: "Describe a difficult decision you made" },
+  { topic: "What was your favorite school subject and why?" },
 
   // Future & Goals (51-60)
-  { topic: "What are your goals for this year?", audioFileId: "" },
-  { topic: "Where do you see yourself in five years?", audioFileId: "" },
-  { topic: "What is your dream job?", audioFileId: "" },
-  { topic: "What would you do if you won the lottery?", audioFileId: "" },
-  { topic: "What skill do you want to improve?", audioFileId: "" },
-  { topic: "What are your career aspirations?", audioFileId: "" },
-  { topic: "Do you have any bucket list items?", audioFileId: "" },
-  { topic: "What would you like to achieve before you retire?", audioFileId: "" },
-  { topic: "If you could learn anything, what would it be?", audioFileId: "" },
-  { topic: "What changes do you want to make in your life?", audioFileId: "" },
+  { topic: "What are your goals for this year?" },
+  { topic: "Where do you see yourself in five years?" },
+  { topic: "What is your dream job?" },
+  { topic: "What would you do if you won the lottery?" },
+  { topic: "What skill do you want to improve?" },
+  { topic: "What are your career aspirations?" },
+  { topic: "Do you have any bucket list items?" },
+  { topic: "What would you like to achieve before you retire?" },
+  { topic: "If you could learn anything, what would it be?" },
+  { topic: "What changes do you want to make in your life?" },
 
   // Opinions & Preferences (61-70)
-  { topic: "What is your favorite movie and why?", audioFileId: "" },
-  { topic: "Do you prefer working from home or in an office?", audioFileId: "" },
-  { topic: "What is your favorite season and why?", audioFileId: "" },
-  { topic: "Are you a morning person or a night owl?", audioFileId: "" },
-  { topic: "What type of food do you enjoy the most?", audioFileId: "" },
-  { topic: "Do you prefer city life or country life?", audioFileId: "" },
-  { topic: "What is your opinion on social media?", audioFileId: "" },
-  { topic: "Coffee or tea? Explain your preference", audioFileId: "" },
-  { topic: "What qualities do you value in a friend?", audioFileId: "" },
-  { topic: "What is your favorite holiday and how do you celebrate?", audioFileId: "" },
+  { topic: "What is your favorite movie and why?" },
+  { topic: "Do you prefer working from home or in an office?" },
+  { topic: "What is your favorite season and why?" },
+  { topic: "Are you a morning person or a night owl?" },
+  { topic: "What type of food do you enjoy the most?" },
+  { topic: "Do you prefer city life or country life?" },
+  { topic: "What is your opinion on social media?" },
+  { topic: "Coffee or tea? Explain your preference" },
+  { topic: "What qualities do you value in a friend?" },
+  { topic: "What is your favorite holiday and how do you celebrate?" },
 
   // Work & Education (71-80)
-  { topic: "Describe your current job or studies", audioFileId: "" },
-  { topic: "What do you like and dislike about your work?", audioFileId: "" },
-  { topic: "Tell me about your educational background", audioFileId: "" },
-  { topic: "What motivated you to choose your career?", audioFileId: "" },
-  { topic: "Describe your ideal work environment", audioFileId: "" },
-  { topic: "What have you learned from your job?", audioFileId: "" },
-  { topic: "How do you handle stress at work?", audioFileId: "" },
-  { topic: "Tell me about a project you are proud of", audioFileId: "" },
-  { topic: "What skills are important in your field?", audioFileId: "" },
-  { topic: "Describe your relationship with your colleagues", audioFileId: "" },
+  { topic: "Describe your current job or studies" },
+  { topic: "What do you like and dislike about your work?" },
+  { topic: "Tell me about your educational background" },
+  { topic: "What motivated you to choose your career?" },
+  { topic: "Describe your ideal work environment" },
+  { topic: "What have you learned from your job?" },
+  { topic: "How do you handle stress at work?" },
+  { topic: "Tell me about a project you are proud of" },
+  { topic: "What skills are important in your field?" },
+  { topic: "Describe your relationship with your colleagues" },
 
   // Technology & Modern Life (81-90)
-  { topic: "How has technology changed your life?", audioFileId: "" },
-  { topic: "What apps do you use every day?", audioFileId: "" },
-  { topic: "Do you think AI will change the world?", audioFileId: "" },
-  { topic: "How do you stay informed about news?", audioFileId: "" },
-  { topic: "What do you think about online shopping?", audioFileId: "" },
-  { topic: "How much time do you spend on your phone?", audioFileId: "" },
-  { topic: "What is your favorite website or platform?", audioFileId: "" },
-  { topic: "Do you think technology makes life easier or harder?", audioFileId: "" },
-  { topic: "How do you protect your privacy online?", audioFileId: "" },
-  { topic: "What technology do you wish existed?", audioFileId: "" },
+  { topic: "How has technology changed your life?" },
+  { topic: "What apps do you use every day?" },
+  { topic: "Do you think AI will change the world?" },
+  { topic: "How do you stay informed about news?" },
+  { topic: "What do you think about online shopping?" },
+  { topic: "How much time do you spend on your phone?" },
+  { topic: "What is your favorite website or platform?" },
+  { topic: "Do you think technology makes life easier or harder?" },
+  { topic: "How do you protect your privacy online?" },
+  { topic: "What technology do you wish existed?" },
 
   // Hypothetical & Creative (91-100)
-  { topic: "If you could have dinner with anyone, who would it be?", audioFileId: "" },
-  { topic: "If you could live in any era, which would you choose?", audioFileId: "" },
-  { topic: "What superpower would you want to have?", audioFileId: "" },
-  { topic: "If you could change one thing about the world, what would it be?", audioFileId: "" },
-  { topic: "Describe your perfect day", audioFileId: "" },
-  { topic: "If you could master any skill instantly, what would it be?", audioFileId: "" },
-  { topic: "What advice would you give to your younger self?", audioFileId: "" },
-  { topic: "If you could live anywhere, where would you choose?", audioFileId: "" },
-  { topic: "What would you do if you had an extra hour every day?", audioFileId: "" },
-  { topic: "If you could start a business, what would it be?", audioFileId: "" },
+  { topic: "If you could have dinner with anyone, who would it be?" },
+  { topic: "If you could live in any era, which would you choose?" },
+  { topic: "What superpower would you want to have?" },
+  { topic: "If you could change one thing about the world, what would it be?" },
+  { topic: "Describe your perfect day" },
+  { topic: "If you could master any skill instantly, what would it be?" },
+  { topic: "What advice would you give to your younger self?" },
+  { topic: "If you could live anywhere, where would you choose?" },
+  { topic: "What would you do if you had an extra hour every day?" },
+  { topic: "If you could start a business, what would it be?" },
 ];
 
-async function main() {
+export async function seedPrompts(prisma: PrismaClient): Promise<void> {
   console.log("Seeding prompts...");
 
   for (const prompt of prompts) {
+    const existingPrompt = await prisma.prompt.findFirst({
+      where: { topic: prompt.topic },
+      select: { id: true },
+    });
+
+    if (existingPrompt) {
+      continue;
+    }
+
     await prisma.prompt.create({
       data: {
         topic: prompt.topic,
-        audioFileId: prompt.audioFileId,
+        audioFileId: null,
         isActive: true,
       },
     });
   }
 
-  console.log(`Successfully seeded ${prompts.length} prompts.`);
+  console.log(`Prompt seed checked ${prompts.length} built-in prompts.`);
 }
-
-main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });

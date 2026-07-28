@@ -17,21 +17,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Setup
-npm install
+npm ci
 npx prisma generate
 npx prisma migrate dev
-npx prisma db seed
+npm run prisma:seed
 
 # Development
 npm run build && npm run start
 
-# Docker (includes PostgreSQL)
-docker-compose up --build
+# Docker (PostgreSQL -> migrations -> idempotent seeds -> app)
+docker compose up -d --build
 
 # Prisma commands
 npx prisma migrate dev          # Create migration
 npx prisma migrate deploy       # Apply migrations (production)
-npx prisma db seed              # Seed prompts
+npm run prisma:seed             # Seed missing prompts and optional admin
+npm run deploy:init             # Production migrations + seeds
 ```
 
 ## Architecture
@@ -69,7 +70,7 @@ AI services use injection tokens (`WHISPER_SERVICE`, `LLM_SERVICE`, `TTS_SERVICE
 
 Six tables (see `prisma/schema.prisma`):
 - `users` - Telegram users with daily prompt settings and timezone
-- `prompts` - Voice questions with audio file IDs
+- `prompts` - Questions with optional Telegram audio file IDs
 - `user_prompts` - Tracks which prompts were sent to which users
 - `conversation_messages` - Multi-turn conversation history per user_prompt
 - `user_responses` - User voice responses with transcription/analysis

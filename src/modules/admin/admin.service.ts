@@ -64,7 +64,7 @@ export interface PromptItem {
   id: string;
   topic: string;
   textContent: string | null;
-  audioFileId: string;
+  audioFileId: string | null;
   difficulty: string;
   tags: string[];
   isActive: boolean;
@@ -76,7 +76,7 @@ export interface PromptItem {
 export interface CreatePromptDto {
   topic: string;
   textContent?: string;
-  audioFileId: string;
+  audioFileId?: string | null;
   difficulty?: string;
   tags?: string[];
   isActive?: boolean;
@@ -86,7 +86,7 @@ export interface CreatePromptDto {
 export interface UpdatePromptDto {
   topic?: string;
   textContent?: string;
-  audioFileId?: string;
+  audioFileId?: string | null;
   difficulty?: string;
   tags?: string[];
   isActive?: boolean;
@@ -443,7 +443,7 @@ export class AdminService {
       data: {
         topic: dto.topic,
         textContent: dto.textContent,
-        audioFileId: dto.audioFileId,
+        audioFileId: dto.audioFileId?.trim() || null,
         difficulty: dto.difficulty ?? "medium",
         tags: dto.tags ?? [],
         isActive: dto.isActive ?? true,
@@ -474,7 +474,10 @@ export class AdminService {
       data: {
         topic: dto.topic,
         textContent: dto.textContent,
-        audioFileId: dto.audioFileId,
+        audioFileId:
+          dto.audioFileId === undefined
+            ? undefined
+            : dto.audioFileId?.trim() || null,
         difficulty: dto.difficulty,
         tags: dto.tags,
         isActive: dto.isActive,

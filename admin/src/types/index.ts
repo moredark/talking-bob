@@ -84,7 +84,7 @@ export interface PromptItem {
   id: string;
   topic: string;
   textContent: string | null;
-  audioFileId: string;
+  audioFileId: string | null;
   difficulty: string;
   tags: string[];
   isActive: boolean;
@@ -96,7 +96,7 @@ export interface PromptItem {
 export interface CreatePromptDto {
   topic: string;
   textContent?: string;
-  audioFileId: string;
+  audioFileId?: string | null;
   difficulty?: string;
   tags?: string[];
   isActive?: boolean;
@@ -106,7 +106,7 @@ export interface CreatePromptDto {
 export interface UpdatePromptDto {
   topic?: string;
   textContent?: string;
-  audioFileId?: string;
+  audioFileId?: string | null;
   difficulty?: string;
   tags?: string[];
   isActive?: boolean;
