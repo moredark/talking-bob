@@ -3,6 +3,8 @@ import { Context } from "grammy";
 import { UserService } from "../../user";
 import { RateLimitService } from "../../rate-limit";
 import { PromptService } from "../../prompt";
+import { Prompt } from "@prisma/client";
+import { RATE_LIMITS } from "../../../config/limits.config";
 
 const WELCOME_MESSAGE = `Привет! Я Talking Bob — бот для практики разговорного английского.
 
@@ -38,28 +40,6 @@ export class StartHandler {
 
     this.logger.log(`User registered/found: ${user.id} (tg: ${telegramId})`);
 
-    const isAllowed = await this.rateLimitService.checkLimit(
-      user.id,
-      "command",
-    );
-
-    if (!isAllowed) {
-      await ctx.reply("Превышен лимит запросов. Попробуйте позже.");
-      return;
-    }
-
-    await this.rateLimitService.recordAction(user.id, "command");
-
-    await ctx.reply(WELCOME_MESSAGE);
-
-    setTimeout(() => {
-      this.sendPrompt(ctx, user.id).catch((err) => {
-        this.logger.error("Failed to send prompt:", err);
-      });
-    }, QUESTION_DELAY_MS);
-  }
-
-  private async sendPrompt(ctx: Context, userId: string): Promise<void> {
     const prompt = await this.promptService.getRandomActivePrompt();
 
     if (!prompt) {
@@ -67,8 +47,46 @@ export class StartHandler {
       return;
     }
 
-    await this.promptService.recordPromptSent(userId, prompt.id);
+    const admission = await this.rateLimitService.consumeCalendarDayLimit(
+      user.id,
+      "dialog_start",
+      user.timezone,
+      RATE_LIMITS.dialog_start.maxRequests,
+    );
 
+    if (!admission.allowed) {
+      await ctx.reply(
+        `Лимит новых диалогов на сегодня исчерпан (${RATE_LIMITS.dialog_start.maxRequests}). Попробуйте завтра.`,
+      );
+      return;
+    }
+
+    try {
+      await this.promptService.recordPromptSent(user.id, prompt.id);
+    } catch (error) {
+      try {
+        await this.rateLimitService.releaseAction(admission.requestId);
+      } catch (releaseError) {
+        this.logger.error("Failed to release dialog rate limit:", releaseError);
+      }
+
+      throw error;
+    }
+
+    await ctx.reply(WELCOME_MESSAGE);
+
+    setTimeout(() => {
+      this.sendPrompt(ctx, user.id, prompt).catch((err) => {
+        this.logger.error("Failed to send prompt:", err);
+      });
+    }, QUESTION_DELAY_MS);
+  }
+
+  private async sendPrompt(
+    ctx: Context,
+    userId: string,
+    prompt: Prompt,
+  ): Promise<void> {
     if (prompt.audioFileId) {
       try {
         await ctx.replyWithVoice(prompt.audioFileId, {
