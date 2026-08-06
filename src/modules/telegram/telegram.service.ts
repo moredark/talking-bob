@@ -21,26 +21,12 @@ export class TelegramService implements OnModuleInit {
     private readonly dailyPromptDispatcher: DailyPromptDispatcher,
   ) {
     const token = process.env.TELEGRAM_BOT_TOKEN;
-    const apiRoot = this.getTelegramApiRoot();
 
     if (!token) {
       throw new Error("TELEGRAM_BOT_TOKEN is not defined");
     }
 
-    this.bot = new Bot(
-      token,
-      apiRoot
-        ? {
-            client: {
-              apiRoot,
-            },
-          }
-        : undefined,
-    );
-
-    if (apiRoot) {
-      this.logger.log(`Using custom Telegram API root: ${apiRoot}`);
-    }
+    this.bot = new Bot(token);
   }
 
   async onModuleInit() {
@@ -105,7 +91,10 @@ export class TelegramService implements OnModuleInit {
           onStart: () => this.logger.log("Telegram bot started"),
         })
         .catch((error) => {
-          this.logger.error("Telegram bot stopped with an error", this.formatError(error));
+          this.logger.error(
+            "Telegram bot stopped with an error",
+            this.formatError(error),
+          );
           this.scheduleBotRestart();
         });
     } catch (error) {
@@ -138,9 +127,5 @@ export class TelegramService implements OnModuleInit {
     }
 
     return String(error);
-  }
-
-  private getTelegramApiRoot(): string | undefined {
-    return process.env.TELEGRAM_API_ROOT?.trim().replace(/\/+$/, "") || undefined;
   }
 }

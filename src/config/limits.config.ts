@@ -12,4 +12,24 @@ export const RATE_LIMITS = {
   },
 } as const;
 
+export const VOICE_MESSAGE_LIMITS = {
+  maxDurationSeconds: 5 * 60,
+  maxFileSizeBytes: 20 * 1024 * 1024,
+} as const;
+
+export const EXTERNAL_REQUEST_LIMITS = {
+  telegramFileDownload: {
+    timeoutMs: 30_000,
+    maxResponseBytes: VOICE_MESSAGE_LIMITS.maxFileSizeBytes,
+  },
+  whisper: {
+    timeoutMs: 120_000,
+    maxResponseBytes: 1024 * 1024,
+  },
+  llm: {
+    timeoutMs: 90_000,
+    maxResponseBytes: 1024 * 1024,
+  },
+} as const;
+
 export const DEFAULT_USER_TIMEZONE = "Europe/Moscow";

@@ -9,9 +9,6 @@ export {
   FeedbackResult,
   ConversationMessage,
   LLM_SERVICE,
-  ITTSService,
-  TTSResult,
-  TTS_SERVICE,
 } from "./interfaces";
 
-export { WhisperService, LLMService, TTSService } from "./services";
+export { WhisperService, LLMService } from "./services";
