@@ -1,7 +1,6 @@
-import { Module, forwardRef } from "@nestjs/common";
+import { Module } from "@nestjs/common";
 import { ScheduleModule as NestScheduleModule } from "@nestjs/schedule";
 import { DatabaseModule } from "../../infrastructure/database";
-import { PromptModule } from "../prompt";
 import { ScheduleService } from "./schedule.service";
 import { SchedulerService } from "./scheduler.service";
 import { DailyPromptDispatcher } from "./daily-prompt.dispatcher";
@@ -11,7 +10,6 @@ import { MESSAGE_DISPATCHER } from "./message-dispatcher.interface";
   imports: [
     NestScheduleModule.forRoot(),
     DatabaseModule,
-    PromptModule,
   ],
   providers: [
     ScheduleService,
@@ -22,6 +20,6 @@ import { MESSAGE_DISPATCHER } from "./message-dispatcher.interface";
       useExisting: DailyPromptDispatcher,
     },
   ],
-  exports: [ScheduleService, DailyPromptDispatcher],
+  exports: [ScheduleService, DailyPromptDispatcher, MESSAGE_DISPATCHER],
 })
 export class ScheduleModule {}

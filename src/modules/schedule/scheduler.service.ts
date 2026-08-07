@@ -39,30 +39,28 @@ export class SchedulerService {
     this.isProcessing = true;
 
     try {
-      const users = await this.scheduleService.getUsersDueForPrompt();
+      await this.scheduleService.repairAllSchedules();
+      const claims = await this.scheduleService.claimScheduledBatch();
 
-      if (users.length === 0) {
+      if (claims.length === 0) {
         return;
       }
 
-      this.logger.log(`Processing ${users.length} scheduled messages`);
+      this.logger.log(`Processing ${claims.length} scheduled messages`);
 
       let successCount = 0;
 
-      for (const user of users) {
+      for (const claim of claims) {
         try {
-          // Mark as sent BEFORE sending to prevent duplicates on failure-retry
-          // This is a "at-most-once" delivery semantic
-          // For "at-least-once", move markPromptSent after dispatch
-          await this.scheduleService.markPromptSent(user.id);
+          const outcome = await this.messageDispatcher.dispatch(claim);
 
-          const success = await this.messageDispatcher.dispatch(user);
-
-          if (success) {
+          if (outcome === "sent") {
             successCount++;
           }
         } catch (error) {
-          this.logger.error(`Error processing user ${user.id}: ${error}`);
+          this.logger.error(
+            `Error processing user prompt ${claim.userPromptId}`,
+          );
           // Continue with other users even if one fails
         }
       }
@@ -77,33 +75,3 @@ export class SchedulerService {
     }
   }
 }
-
-/**
- * FUTURE IMPROVEMENTS for horizontal scaling:
- *
- * 1. Database-level locking (PostgreSQL advisory locks):
- *    - Use SELECT ... FOR UPDATE SKIP LOCKED to claim users
- *    - This allows multiple instances to process different users
- *
- * 2. Redis-based distributed lock:
- *    - Use Redlock algorithm to ensure only one instance runs the scheduler
- *    - Good for "only one scheduler" approach
- *
- * 3. BullMQ migration:
- *    - Move to job queue for better reliability and monitoring
- *    - Each user's schedule becomes a delayed job
- *    - Built-in retry, dead letter queue, and concurrency control
- *
- * Example with PostgreSQL advisory locks:
- *
- * async processWithLocking() {
- *   const users = await this.prisma.$queryRaw`
- *     SELECT * FROM users
- *     WHERE daily_prompt_enabled = true
- *       AND next_prompt_at <= NOW()
- *     FOR UPDATE SKIP LOCKED
- *     LIMIT 100
- *   `;
- *   // Process users...
- * }
- */

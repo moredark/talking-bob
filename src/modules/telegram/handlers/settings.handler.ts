@@ -3,6 +3,10 @@ import { Context, InlineKeyboard } from "grammy";
 import { UserService } from "../../user";
 import { ScheduleService } from "../../schedule";
 import { AgentTone } from "../../ai";
+import {
+  resolveEffectiveTimeZone,
+  validateScheduleTime,
+} from "../../../shared/time";
 
 const TIME_OPTIONS = [
   { label: "09:00", hour: 9, minute: 0 },
@@ -12,8 +16,6 @@ const TIME_OPTIONS = [
   { label: "18:00", hour: 18, minute: 0 },
   { label: "21:00", hour: 21, minute: 0 },
 ];
-
-const DEFAULT_TIMEZONE = "Europe/Moscow";
 
 @Injectable()
 export class SettingsHandler {
@@ -43,6 +45,7 @@ export class SettingsHandler {
       user.dailyPromptEnabled,
       user.dailyPromptHour,
       user.dailyPromptMinute,
+      user.timezone,
       this.normalizeTone(user.agentTone),
     );
   }
@@ -57,20 +60,16 @@ export class SettingsHandler {
     const user = await this.userService.findByTelegramId(BigInt(telegramId));
     if (!user) return;
 
-    if (user.dailyPromptEnabled) {
-      await this.scheduleService.disableSchedule(user.id);
-    } else {
-      await this.scheduleService.enableSchedule(user.id);
-    }
-
-    const updated = await this.userService.findByTelegramId(BigInt(telegramId));
-    if (!updated) return;
+    const updated = user.dailyPromptEnabled
+      ? await this.scheduleService.disableSchedule(user.id)
+      : await this.scheduleService.enableSchedule(user.id);
 
     await this.editSettings(
       ctx,
       updated.dailyPromptEnabled,
       updated.dailyPromptHour,
       updated.dailyPromptMinute,
+      updated.timezone,
       this.normalizeTone(updated.agentTone),
     );
   }
@@ -85,25 +84,34 @@ export class SettingsHandler {
     const user = await this.userService.findByTelegramId(BigInt(telegramId));
     if (!user) return;
 
-    const [hourStr, minuteStr] = data.replace("set_time_", "").split("_");
-    const hour = parseInt(hourStr, 10);
-    const minute = parseInt(minuteStr, 10);
+    const match = /^set_time_(\d{1,2})_(\d{1,2})$/.exec(data);
+    if (!match) {
+      this.logger.warn("Rejected malformed schedule callback");
+      return;
+    }
 
-    await this.scheduleService.initializeSchedule(
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    try {
+      validateScheduleTime(hour, minute);
+    } catch {
+      this.logger.warn("Rejected invalid schedule time");
+      return;
+    }
+
+    const updated = await this.scheduleService.initializeSchedule(
       user.id,
       hour,
       minute,
-      user.timezone || DEFAULT_TIMEZONE,
+      user.timezone,
     );
-
-    const updated = await this.userService.findByTelegramId(BigInt(telegramId));
-    if (!updated) return;
 
     await this.editSettings(
       ctx,
       updated.dailyPromptEnabled,
       updated.dailyPromptHour,
       updated.dailyPromptMinute,
+      updated.timezone,
       this.normalizeTone(updated.agentTone),
     );
   }
@@ -131,6 +139,7 @@ export class SettingsHandler {
       updated.dailyPromptEnabled,
       updated.dailyPromptHour,
       updated.dailyPromptMinute,
+      updated.timezone,
       this.normalizeTone(updated.agentTone),
     );
   }
@@ -140,9 +149,10 @@ export class SettingsHandler {
     enabled: boolean,
     hour: number,
     minute: number,
+    timezone: string,
     tone: AgentTone,
   ): Promise<void> {
-    const text = this.formatSettingsText(enabled, hour, minute, tone);
+    const text = this.formatSettingsText(enabled, hour, minute, timezone, tone);
     const keyboard = this.buildKeyboard(enabled, tone);
     await ctx.reply(text, { reply_markup: keyboard, parse_mode: "HTML" });
   }
@@ -152,9 +162,10 @@ export class SettingsHandler {
     enabled: boolean,
     hour: number,
     minute: number,
+    timezone: string,
     tone: AgentTone,
   ): Promise<void> {
-    const text = this.formatSettingsText(enabled, hour, minute, tone);
+    const text = this.formatSettingsText(enabled, hour, minute, timezone, tone);
     const keyboard = this.buildKeyboard(enabled, tone);
 
     try {
@@ -168,6 +179,7 @@ export class SettingsHandler {
     enabled: boolean,
     hour: number,
     minute: number,
+    timezone: string,
     tone: AgentTone,
   ): string {
     const status = enabled ? "включена" : "выключена";
@@ -180,7 +192,7 @@ export class SettingsHandler {
     return (
       `<b>Настройки</b>\n\n` +
       `Рассылка: <b>${status}</b>\n` +
-      `Время (МСК): <b>${time}</b>\n` +
+      `Время (${resolveEffectiveTimeZone(timezone).timeZone}): <b>${time}</b>\n` +
       `Тон агента: <b>${toneLabel}</b>`
     );
   }

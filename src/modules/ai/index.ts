@@ -11,4 +11,12 @@ export {
   LLM_SERVICE,
 } from "./interfaces";
 
-export { WhisperService, LLMService } from "./services";
+export {
+  WhisperService,
+  LLMService,
+  AI_REQUEST_CONCURRENCY,
+  AI_REQUEST_MAX_PENDING,
+  AiRequestLimiterClosedError,
+  AiRequestLimiterOverloadedError,
+  AiRequestLimiterService,
+} from "./services";

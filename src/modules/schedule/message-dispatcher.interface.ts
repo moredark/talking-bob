@@ -1,4 +1,18 @@
-import { User } from "@prisma/client";
+export interface DeliveryClaim {
+  userPromptId: string;
+  claimToken: string;
+  user: {
+    id: string;
+    telegramId: bigint;
+  };
+  prompt: {
+    id: string;
+    topic: string;
+    audioFileId: string | null;
+  };
+}
+
+export type DeliveryOutcome = "sent" | "failed" | "pending" | "not_attempted";
 
 /**
  * Interface for message dispatching.
@@ -8,11 +22,10 @@ import { User } from "@prisma/client";
  */
 export interface IMessageDispatcher {
   /**
-   * Send a scheduled message to a user.
-   * @param user The user to send the message to
-   * @returns true if the message was sent successfully, false otherwise
+   * Attempt a previously persisted manual or scheduled delivery claim.
+   * The outcome describes the durable state after the attempt.
    */
-  dispatch(user: User): Promise<boolean>;
+  dispatch(claim: DeliveryClaim): Promise<DeliveryOutcome>;
 }
 
 export const MESSAGE_DISPATCHER = Symbol("MESSAGE_DISPATCHER");

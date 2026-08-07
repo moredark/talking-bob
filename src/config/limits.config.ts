@@ -32,4 +32,14 @@ export const EXTERNAL_REQUEST_LIMITS = {
   },
 } as const;
 
+export const RUNTIME_CONCURRENCY_LIMITS = {
+  telegramUpdates: 4,
+  aiRequests: 2,
+  aiRequestMaxPending: 8,
+} as const;
+
+export const RUNTIME_SHUTDOWN_LIMITS = {
+  drainTimeoutMs: 30_000,
+} as const;
+
 export const DEFAULT_USER_TIMEZONE = "Europe/Moscow";

@@ -1,7 +1,9 @@
 import { Injectable } from "@nestjs/common";
-import { User } from "@prisma/client";
+import { Prisma, User } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database";
 import type { AgentTone } from "../ai";
+import { DEFAULT_USER_TIMEZONE } from "../../config/limits.config";
+import { nextSlotAtOrAfter } from "../../shared/time";
 
 export interface CreateUserData {
   telegramId: bigint;
@@ -19,10 +21,22 @@ export class UserService {
   }
 
   async createUser(data: CreateUserData): Promise<User> {
+    const now = new Date();
+
     return this.prisma.user.create({
       data: {
         telegramId: data.telegramId,
         username: data.username,
+        dailyPromptEnabled: true,
+        dailyPromptHour: 13,
+        dailyPromptMinute: 0,
+        timezone: DEFAULT_USER_TIMEZONE,
+        nextPromptAt: nextSlotAtOrAfter(
+          now,
+          13,
+          0,
+          DEFAULT_USER_TIMEZONE,
+        ).instant,
       },
     });
   }
@@ -31,30 +45,10 @@ export class UserService {
     return this.prisma.user.findMany();
   }
 
-  async updateDailyPromptSettings(
-    userId: string,
-    settings: { dailyPromptEnabled?: boolean; dailyPromptHour?: number; dailyPromptMinute?: number },
-  ): Promise<User> {
-    return this.prisma.user.update({
-      where: { id: userId },
-      data: settings,
-    });
-  }
-
   async updateAgentTone(userId: string, tone: AgentTone): Promise<User> {
     return this.prisma.user.update({
       where: { id: userId },
       data: { agentTone: tone },
-    });
-  }
-
-  async getUsersForDailyPrompt(hour: number, minute: number): Promise<User[]> {
-    return this.prisma.user.findMany({
-      where: {
-        dailyPromptEnabled: true,
-        dailyPromptHour: hour,
-        dailyPromptMinute: minute,
-      },
     });
   }
 
@@ -68,6 +62,18 @@ export class UserService {
       return existingUser;
     }
 
-    return this.createUser({ telegramId, username });
+    try {
+      return await this.createUser({ telegramId, username });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        const winner = await this.findByTelegramId(telegramId);
+        if (winner) return winner;
+      }
+
+      throw error;
+    }
   }
 }

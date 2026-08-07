@@ -56,7 +56,7 @@ Fields:
 
 - `id`: UUID, primary key
 - `topic`: string
-- `audioFileId`: string (Telegram file_id)
+- `audioFileId`: string, nullable (pre-uploaded Telegram voice file_id; no runtime TTS generation)
 - `isActive`: boolean
 - `createdAt`: timestamp
 
@@ -82,7 +82,7 @@ Purpose:
 
 - analytics
 - linking prompt → response
-- prompt reuse
+- prompt reuse: one `Prompt` can be linked to many users and dialogs through `UserPrompt`
 
 ---
 
@@ -105,6 +105,7 @@ Purpose:
 - storing user responses
 - storing transcription and analysis
 - foundation for dialogue history
+- at most one final `UserResponse` per `UserPrompt` (`userPromptId` is unique)
 
 ---
 

@@ -38,5 +38,8 @@ strip the `/api` prefix before forwarding requests to NestJS.
 - NestJS + TypeScript
 - Grammy (Telegram)
 - Prisma + PostgreSQL
-- Cloud.ru (Whisper, LLM)
-- ElevenLabs (TTS)
+- Cloud.ru (Whisper STT, LLM)
+
+Built-in questions currently use text delivery. A prompt may still reference a
+pre-uploaded Telegram voice through optional `audioFileId`; runtime TTS
+generation is not implemented.

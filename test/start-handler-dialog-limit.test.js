@@ -5,164 +5,166 @@ const {
   StartHandler,
 } = require("../dist/modules/telegram/handlers/start.handler");
 
-function createContext() {
-  const replies = [];
+const user = {
+  id: "user-1",
+  telegramId: 123n,
+  timezone: "Europe/Moscow",
+};
+const prompt = {
+  id: "prompt-1",
+  topic: "Introduce yourself",
+  audioFileId: null,
+};
+const claim = {
+  userPromptId: "user-prompt-1",
+  claimToken: "claim-token",
+  user: { id: user.id, telegramId: user.telegramId },
+  prompt,
+};
 
-  return {
-    context: {
-      from: { id: 123, username: "alice" },
-      reply: async (message) => {
-        replies.push(message);
-      },
-    },
-    replies,
-  };
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
-function createUserService() {
-  return {
-    findOrCreateByTelegramId: async () => ({
-      id: "user-1",
-      timezone: "Europe/Moscow",
-    }),
+function createSubject({
+  selectedPrompt = prompt,
+  admission = { allowed: true, requestId: "request-1" },
+  createClaim = async () => claim,
+  dispatch = async () => "sent",
+} = {}) {
+  const calls = {
+    quota: [],
+    release: [],
+    createClaim: [],
+    dispatch: [],
+    replies: [],
   };
-}
-
-test("StartHandler does not consume the quota when no prompt is available", async () => {
-  const { context, replies } = createContext();
-  let limitChecks = 0;
-  let recordedActions = 0;
   const handler = new StartHandler(
-    createUserService(),
     {
-      consumeCalendarDayLimit: async () => {
-        limitChecks += 1;
-        return { allowed: true, requestId: "request-1" };
+      findOrCreateByTelegramId: async () => user,
+    },
+    {
+      consumeCalendarDayLimit: async (...args) => {
+        calls.quota.push(args);
+        return admission;
       },
-      releaseAction: async () => {
-        recordedActions += 1;
+      releaseAction: async (...args) => calls.release.push(args),
+    },
+    {
+      getRandomActivePrompt: async () => selectedPrompt,
+    },
+    {
+      createManualClaim: async (...args) => {
+        calls.createClaim.push(args);
+        return createClaim(...args);
       },
     },
-    { getRandomActivePrompt: async () => null },
+    {
+      dispatch: async (...args) => {
+        calls.dispatch.push(args);
+        return dispatch(...args);
+      },
+    },
   );
+  const context = {
+    from: { id: 123, username: "alice" },
+    reply: async (message) => calls.replies.push(message),
+  };
+  return { calls, context, handler };
+}
+
+test("does not consume quota or create a claim when no prompt is available", async () => {
+  const { calls, context, handler } = createSubject({
+    selectedPrompt: null,
+  });
 
   await handler.handle(context);
 
-  assert.equal(limitChecks, 0);
-  assert.equal(recordedActions, 0);
-  assert.deepEqual(replies, ["К сожалению, сейчас нет доступных вопросов."]);
+  assert.equal(calls.quota.length, 0);
+  assert.equal(calls.createClaim.length, 0);
+  assert.equal(calls.dispatch.length, 0);
+  assert.deepEqual(calls.replies, ["К сожалению, сейчас нет доступных вопросов."]);
 });
 
-test("StartHandler rejects the 21st dialog without recording or scheduling it", async () => {
-  const { context, replies } = createContext();
-  let recordedActions = 0;
-  let promptRecords = 0;
-  const handler = new StartHandler(
-    createUserService(),
-    {
-      consumeCalendarDayLimit: async () => ({ allowed: false }),
-      releaseAction: async () => {
-        recordedActions += 1;
-      },
-    },
-    {
-      getRandomActivePrompt: async () => ({ id: "prompt-1" }),
-      recordPromptSent: async () => {
-        promptRecords += 1;
-      },
-    },
-  );
+test("rejects the 21st dialog without creating or dispatching a claim", async () => {
+  const { calls, context, handler } = createSubject({
+    admission: { allowed: false },
+  });
 
   await handler.handle(context);
 
-  assert.equal(recordedActions, 0);
-  assert.equal(promptRecords, 0);
-  assert.equal(replies.length, 1);
-  assert.match(replies[0], /20/);
-  assert.match(replies[0], /завтра/);
+  assert.equal(calls.release.length, 0);
+  assert.equal(calls.createClaim.length, 0);
+  assert.equal(calls.dispatch.length, 0);
+  assert.equal(calls.replies.length, 1);
+  assert.match(calls.replies[0], /20/);
+  assert.match(calls.replies[0], /завтра/);
 });
 
-test("StartHandler releases the quota when session persistence fails", async () => {
-  const { context } = createContext();
-  const releasedRequests = [];
-  const handler = new StartHandler(
-    createUserService(),
-    {
-      consumeCalendarDayLimit: async () => ({
-        allowed: true,
-        requestId: "request-1",
-      }),
-      releaseAction: async (requestId) => {
-        releasedRequests.push(requestId);
-      },
+test("releases quota only when manual claim persistence fails", async () => {
+  const failure = new Error("database unavailable");
+  const { calls, context, handler } = createSubject({
+    createClaim: async () => {
+      throw failure;
     },
-    {
-      getRandomActivePrompt: async () => ({ id: "prompt-1" }),
-      recordPromptSent: async () => {
-        throw new Error("database unavailable");
-      },
-    },
-  );
+  });
 
-  await assert.rejects(handler.handle(context), /database unavailable/);
-  assert.deepEqual(releasedRequests, ["request-1"]);
+  await assert.rejects(handler.handle(context), failure);
+  assert.deepEqual(calls.release, [["request-1"]]);
+  assert.equal(calls.dispatch.length, 0);
 });
 
-test("StartHandler records an allowed dialog and schedules its prompt", async () => {
-  const { context, replies } = createContext();
-  const actions = [];
-  const promptRecords = [];
+test("does not release quota after a persisted claim when dispatch fails", async () => {
+  const failure = new Error("Telegram unavailable");
+  const { calls, context, handler } = createSubject({
+    dispatch: async () => {
+      throw failure;
+    },
+  });
+
+  await assert.rejects(handler.handle(context), failure);
+  assert.equal(calls.createClaim.length, 1);
+  assert.equal(calls.dispatch.length, 1);
+  assert.equal(calls.release.length, 0);
+});
+
+test("creates a manual claim and awaits dispatch without scheduling a timer", async () => {
+  const gate = deferred();
   const originalSetTimeout = global.setTimeout;
-  let scheduledDelay;
-
-  global.setTimeout = (callback, delay) => {
-    scheduledDelay = delay;
-    callback();
-    return 1;
+  global.setTimeout = () => {
+    throw new Error("StartHandler must not schedule detached timers");
   };
+  const { calls, context, handler } = createSubject({
+    dispatch: async () => {
+      await gate.promise;
+      return "sent";
+    },
+  });
 
+  let finished = false;
   try {
-    const handler = new StartHandler(
-      createUserService(),
-      {
-        consumeCalendarDayLimit: async (
-          userId,
-          action,
-          timeZone,
-          maxRequests,
-        ) => {
-          assert.equal(userId, "user-1");
-          assert.equal(action, "dialog_start");
-          assert.equal(timeZone, "Europe/Moscow");
-          assert.equal(maxRequests, 20);
-          return { allowed: true, requestId: "request-1" };
-        },
-        releaseAction: async (requestId) => {
-          actions.push({ requestId, released: true });
-        },
-      },
-      {
-        getRandomActivePrompt: async () => ({
-          id: "prompt-1",
-          topic: "Introduce yourself",
-          audioFileId: null,
-        }),
-        recordPromptSent: async (userId, promptId) => {
-          promptRecords.push({ userId, promptId });
-        },
-      },
-    );
-
-    await handler.handle(context);
+    const handling = handler.handle(context).then(() => {
+      finished = true;
+    });
     await new Promise((resolve) => setImmediate(resolve));
 
-    assert.deepEqual(actions, []);
-    assert.deepEqual(promptRecords, [
-      { userId: "user-1", promptId: "prompt-1" },
+    assert.equal(finished, false);
+    assert.deepEqual(calls.quota, [
+      ["user-1", "dialog_start", "Europe/Moscow", 20],
     ]);
-    assert.equal(scheduledDelay, 5000);
-    assert.equal(replies.length, 2);
-    assert.match(replies[1], /Introduce yourself/);
+    assert.deepEqual(calls.createClaim, [[user, prompt]]);
+    assert.deepEqual(calls.dispatch, [[claim]]);
+    assert.equal(calls.replies.length, 1);
+    assert.match(calls.replies[0], /Сейчас пришлю/);
+    assert.equal(calls.release.length, 0);
+
+    gate.resolve();
+    await handling;
+    assert.equal(finished, true);
   } finally {
     global.setTimeout = originalSetTimeout;
   }

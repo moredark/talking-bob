@@ -1,4 +1,6 @@
-import { Module } from "@nestjs/common";
+import { DynamicModule, Module } from "@nestjs/common";
+import { RuntimeConfigModule } from "./config/runtime-config.module";
+import { RuntimeConfig } from "./config/runtime.config";
 import { DatabaseModule } from "./infrastructure/database";
 import { TelegramModule } from "./modules/telegram";
 import { AuthModule } from "./modules/auth";
@@ -14,4 +16,11 @@ import { ErrorLogModule } from "./modules/error-log";
     AdminModule,
   ],
 })
-export class AppModule {}
+export class AppModule {
+  static forRoot(runtimeConfig: RuntimeConfig): DynamicModule {
+    return {
+      module: AppModule,
+      imports: [RuntimeConfigModule.forRoot(runtimeConfig)],
+    };
+  }
+}

@@ -1,18 +1,20 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { Context } from "grammy";
-import { UserService } from "../../user";
-import { RateLimitService } from "../../rate-limit";
-import { PromptService } from "../../prompt";
-import { Prompt } from "@prisma/client";
 import { RATE_LIMITS } from "../../../config/limits.config";
+import { PromptService } from "../../prompt";
+import { RateLimitService } from "../../rate-limit";
+import {
+  IMessageDispatcher,
+  MESSAGE_DISPATCHER,
+  ScheduleService,
+} from "../../schedule";
+import { UserService } from "../../user";
 
 const WELCOME_MESSAGE = `Привет! Я Talking Bob — бот для практики разговорного английского.
 
 Я буду отправлять тебе голосовые сообщения с вопросами на английском. Отвечай голосовым сообщением, и я дам обратную связь.
 
-Через несколько секунд пришлю тебе первый вопрос...`;
-
-const QUESTION_DELAY_MS = 5000;
+Сейчас пришлю тебе первый вопрос.`;
 
 @Injectable()
 export class StartHandler {
@@ -22,6 +24,9 @@ export class StartHandler {
     private readonly userService: UserService,
     private readonly rateLimitService: RateLimitService,
     private readonly promptService: PromptService,
+    private readonly scheduleService: ScheduleService,
+    @Inject(MESSAGE_DISPATCHER)
+    private readonly messageDispatcher: IMessageDispatcher,
   ) {}
 
   async handle(ctx: Context): Promise<void> {
@@ -37,11 +42,9 @@ export class StartHandler {
       BigInt(telegramId),
       username,
     );
-
     this.logger.log(`User registered/found: ${user.id} (tg: ${telegramId})`);
 
     const prompt = await this.promptService.getRandomActivePrompt();
-
     if (!prompt) {
       await ctx.reply("К сожалению, сейчас нет доступных вопросов.");
       return;
@@ -53,7 +56,6 @@ export class StartHandler {
       user.timezone,
       RATE_LIMITS.dialog_start.maxRequests,
     );
-
     if (!admission.allowed) {
       await ctx.reply(
         `Лимит новых диалогов на сегодня исчерпан (${RATE_LIMITS.dialog_start.maxRequests}). Попробуйте завтра.`,
@@ -61,50 +63,23 @@ export class StartHandler {
       return;
     }
 
+    let claim;
     try {
-      await this.promptService.recordPromptSent(user.id, prompt.id);
+      claim = await this.scheduleService.createManualClaim(user, prompt);
     } catch (error) {
       try {
         await this.rateLimitService.releaseAction(admission.requestId);
-      } catch (releaseError) {
-        this.logger.error("Failed to release dialog rate limit:", releaseError);
+      } catch {
+        this.logger.error("Failed to release dialog rate limit");
       }
-
       throw error;
     }
 
-    await ctx.reply(WELCOME_MESSAGE);
-
-    setTimeout(() => {
-      this.sendPrompt(ctx, user.id, prompt).catch((err) => {
-        this.logger.error("Failed to send prompt:", err);
-      });
-    }, QUESTION_DELAY_MS);
-  }
-
-  private async sendPrompt(
-    ctx: Context,
-    userId: string,
-    prompt: Prompt,
-  ): Promise<void> {
-    if (prompt.audioFileId) {
-      try {
-        await ctx.replyWithVoice(prompt.audioFileId, {
-          caption: `🎤 Тема: ${prompt.topic}\n\nПрослушай и ответь голосовым сообщением.`,
-        });
-      } catch {
-        await ctx.reply(
-          `🎤 Тема: ${prompt.topic}\n\n` +
-            `Ответь голосовым сообщением на английском.`,
-        );
-      }
-    } else {
-      await ctx.reply(
-        `🎤 Тема: ${prompt.topic}\n\n` +
-          `Ответь голосовым сообщением на английском.`,
-      );
+    try {
+      await ctx.reply(WELCOME_MESSAGE);
+    } catch {
+      this.logger.warn("Could not send the welcome message");
     }
-
-    this.logger.log(`Sent prompt ${prompt.id} to user ${userId}`);
+    await this.messageDispatcher.dispatch(claim);
   }
 }

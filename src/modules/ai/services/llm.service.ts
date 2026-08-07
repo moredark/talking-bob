@@ -1,10 +1,21 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
+import { RUNTIME_CONFIG } from "../../../config/runtime-config.module";
+import { RuntimeConfig } from "../../../config/runtime.config";
+import {
+  boundedFetch,
+  BoundedHttpError,
+} from "../../../infrastructure/http";
 import {
   AgentTone,
   ILLMService,
   FeedbackResult,
   ConversationMessage,
 } from "../interfaces";
+import {
+  AiRequestLimiterClosedError,
+  AiRequestLimiterOverloadedError,
+  AiRequestLimiterService,
+} from "./ai-request-limiter.service";
 
 const ANALYSIS_SCHEMA_PROMPT = `Return ONLY valid JSON:
 {
@@ -22,18 +33,22 @@ Rules:
 @Injectable()
 export class LLMService implements ILLMService {
   private readonly logger = new Logger(LLMService.name);
-  private readonly apiUrl =
-    process.env.LLM_API_URL ||
-    "https://foundation-models.api.cloud.ru/v1/chat/completions";
-  private readonly model = process.env.LLM_MODEL || "zai-org/GLM-4.7";
-  private readonly analysisMaxTokens = Number(
-    process.env.LLM_ANALYSIS_MAX_TOKENS || 2500,
-  );
-  private readonly followUpMaxTokens = Number(
-    process.env.LLM_FOLLOWUP_MAX_TOKENS || 1200,
-  );
+  private readonly apiUrl: string;
+  private readonly model: string;
+  private readonly analysisMaxTokens: number;
+  private readonly followUpMaxTokens: number;
   private readonly defaultFollowUp =
     "Thanks for your answer. Could you tell me a bit more and give one specific example?";
+
+  constructor(
+    @Inject(RUNTIME_CONFIG) private readonly runtimeConfig: RuntimeConfig,
+    private readonly requestLimiter: AiRequestLimiterService,
+  ) {
+    this.apiUrl = runtimeConfig.llm.apiUrl;
+    this.model = runtimeConfig.llm.model;
+    this.analysisMaxTokens = runtimeConfig.llm.analysisMaxTokens;
+    this.followUpMaxTokens = runtimeConfig.llm.followUpMaxTokens;
+  }
 
   async analyzeSpeech(
     transcript: string,
@@ -41,12 +56,6 @@ export class LLMService implements ILLMService {
     targetLanguage: string = "en",
     tone: AgentTone = "friendly",
   ): Promise<FeedbackResult> {
-    const apiKey = process.env.CLOUD_RU_API_KEY;
-
-    if (!apiKey) {
-      throw new Error("CLOUD_RU_API_KEY is not defined");
-    }
-
     const systemPrompt = this.buildAnalysisSystemPrompt(tone);
 
     const userPrompt = `Topic: "${topic}"\nStudent: "${this.shortenText(transcript, 1800)}"\nAnalyze this English speech.`;
@@ -56,34 +65,27 @@ export class LLMService implements ILLMService {
       { role: "user", content: userPrompt },
     ];
 
-    const attempts = [
-      { temperature: 0.5, maxTokens: this.analysisMaxTokens },
-      { temperature: 0.3, maxTokens: this.analysisMaxTokens + 500 },
-    ];
-
     try {
-      for (let i = 0; i < attempts.length; i += 1) {
-        const attempt = attempts[i];
+      const attempts = [
+        { temperature: 0.5, maxTokens: this.analysisMaxTokens },
+        {
+          temperature: 0.3,
+          maxTokens: Math.min(32_000, this.analysisMaxTokens + 500),
+        },
+      ];
 
-        const response = await fetch(this.apiUrl, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: this.model,
-            messages,
-            temperature: attempt.temperature,
-            top_p: 0.95,
-            presence_penalty: 0,
-            max_tokens: attempt.maxTokens,
-          }),
+      for (let index = 0; index < attempts.length; index += 1) {
+        const attempt = attempts[index];
+        const response = await this.requestCompletion({
+          messages,
+          temperature: attempt.temperature,
+          top_p: 0.95,
+          presence_penalty: 0,
+          max_tokens: attempt.maxTokens,
         });
 
         if (!response.ok) {
-          const errorText = await response.text();
-          this.logger.error(`LLM API error: ${response.status} - ${errorText}`);
+          this.logger.error(`LLM API returned status ${response.status}`);
           throw new Error(`LLM API error: ${response.status}`);
         }
 
@@ -94,21 +96,21 @@ export class LLMService implements ILLMService {
 
         if (content) {
           const feedback = this.parseJsonResponse(content);
-          this.logger.log(`Analysis complete, score: ${feedback.overallScore}`);
+          this.logger.log(
+            `Analysis complete, score: ${feedback.overallScore}`,
+          );
           return feedback;
         }
 
         this.logger.warn(
-          `Analysis response is empty on attempt ${i + 1}/${attempts.length}. finish_reason=${finishReason}, completion_tokens=${completionTokens}`,
+          `Analysis response is empty on attempt ${index + 1}/${attempts.length}. finish_reason=${finishReason}, completion_tokens=${completionTokens}`,
         );
       }
 
-      this.logger.error(
-        "LLM response has no readable content after retries. Using fallback analysis.",
-      );
       return this.createFallbackFeedback(transcript);
     } catch (error) {
-      this.logger.error("Speech analysis failed:", error);
+      this.logger.error(`Speech analysis failed (${this.errorKind(error)})`);
+      if (this.mustPropagate(error)) throw error;
       return this.createFallbackFeedback(transcript);
     }
   }
@@ -118,12 +120,6 @@ export class LLMService implements ILLMService {
     topic: string,
     tone: AgentTone = "friendly",
   ): Promise<string> {
-    const apiKey = process.env.CLOUD_RU_API_KEY;
-
-    if (!apiKey) {
-      throw new Error("CLOUD_RU_API_KEY is not defined");
-    }
-
     const recentHistory = conversationHistory
       .slice(-6)
       .map((msg) => ({
@@ -140,25 +136,16 @@ export class LLMService implements ILLMService {
     ];
 
     try {
-      const response = await fetch(this.apiUrl, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: this.model,
-          messages,
-          temperature: 0.5,
-          top_p: 0.95,
-          presence_penalty: 0,
-          max_tokens: this.followUpMaxTokens,
-        }),
+      const response = await this.requestCompletion({
+        messages,
+        temperature: 0.5,
+        top_p: 0.95,
+        presence_penalty: 0,
+        max_tokens: this.followUpMaxTokens,
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        this.logger.error(`LLM API error: ${response.status} - ${errorText}`);
+        this.logger.error(`LLM API returned status ${response.status}`);
         throw new Error(`LLM API error: ${response.status}`);
       }
 
@@ -175,9 +162,43 @@ export class LLMService implements ILLMService {
 
       return content;
     } catch (error) {
-      this.logger.error("Follow-up generation failed:", error);
+      this.logger.error(
+        `Follow-up generation failed (${this.errorKind(error)})`,
+      );
+      if (this.mustPropagate(error)) throw error;
       return this.defaultFollowUp;
     }
+  }
+
+  private requestCompletion(
+    payload: Record<string, unknown>,
+  ): Promise<Response> {
+    return this.requestLimiter.run((signal) =>
+      boundedFetch(this.apiUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.runtimeConfig.cloudRuApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ model: this.model, ...payload }),
+        signal,
+        timeoutMs: this.runtimeConfig.externalRequests.llm.timeoutMs,
+        maxResponseBytes:
+          this.runtimeConfig.externalRequests.llm.maxResponseBytes,
+      }),
+    );
+  }
+
+  private errorKind(error: unknown): string {
+    return error instanceof Error ? error.name : "UnknownError";
+  }
+
+  private mustPropagate(error: unknown): boolean {
+    return (
+      error instanceof AiRequestLimiterOverloadedError ||
+      error instanceof AiRequestLimiterClosedError ||
+      (error instanceof BoundedHttpError && error.code === "aborted")
+    );
   }
 
   private extractMessageContent(data: any): string | null {

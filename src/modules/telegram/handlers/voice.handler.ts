@@ -1,5 +1,8 @@
 import { Injectable, Inject, Logger, forwardRef } from "@nestjs/common";
 import { Context, InlineKeyboard } from "grammy";
+import { RUNTIME_CONFIG } from "../../../config/runtime-config.module";
+import { RuntimeConfig } from "../../../config/runtime.config";
+import { boundedFetch } from "../../../infrastructure/http";
 import { UserService } from "../../user";
 import { PromptService } from "../../prompt";
 import { ConversationService } from "../../conversation";
@@ -31,6 +34,7 @@ export class VoiceHandler {
     private readonly llmService: ILLMService,
     @Inject(forwardRef(() => ReportHandler))
     private readonly reportHandler: ReportHandler,
+    @Inject(RUNTIME_CONFIG) private readonly runtimeConfig: RuntimeConfig,
   ) {}
 
   async handle(ctx: Context): Promise<void> {
@@ -39,6 +43,23 @@ export class VoiceHandler {
 
     if (!telegramId || !voice) {
       this.logger.warn("Received voice message without user or voice data");
+      return;
+    }
+
+    if (voice.duration > this.runtimeConfig.voice.maxDurationSeconds) {
+      await ctx.reply(
+        `Голосовое сообщение слишком длинное. Максимум — ${this.runtimeConfig.voice.maxDurationSeconds} секунд.`,
+      );
+      return;
+    }
+
+    if (
+      typeof voice.file_size === "number" &&
+      voice.file_size > this.runtimeConfig.voice.maxFileSizeBytes
+    ) {
+      await ctx.reply(
+        `Голосовое сообщение слишком большое. Максимум — ${this.formatByteLimit(this.runtimeConfig.voice.maxFileSizeBytes)}.`,
+      );
       return;
     }
 
@@ -85,8 +106,6 @@ export class VoiceHandler {
         "en",
       );
 
-      this.logger.log(`Transcript: ${transcript.substring(0, 100)}...`);
-
       await this.conversationService.addMessage(
         userPrompt.id,
         "user",
@@ -101,8 +120,6 @@ export class VoiceHandler {
       const userMessages = existingMessages.filter((m) => m.role === "user");
 
       if (userMessages.length >= AUTO_REPORT_AFTER_MESSAGES) {
-        clearInterval(typingInterval);
-
         const formattedUserMessages = userMessages.map((m) => ({
           content: m.content,
           voiceFileId: m.voiceFileId,
@@ -138,8 +155,6 @@ export class VoiceHandler {
         followUp,
       );
 
-      clearInterval(typingInterval);
-
       const keyboard = new InlineKeyboard().text(
         "📊 Получить отчёт",
         "report",
@@ -147,11 +162,14 @@ export class VoiceHandler {
 
       await ctx.reply(followUp, { reply_markup: keyboard });
     } catch (error) {
-      clearInterval(typingInterval);
-      this.logger.error("Failed to process voice message:", error);
+      this.logger.error(
+        `Failed to process voice message (${this.errorKind(error)})`,
+      );
       await ctx.reply(
         "😔 Произошла ошибка при обработке. Попробуйте ещё раз позже.",
       );
+    } finally {
+      clearInterval(typingInterval);
     }
   }
 
@@ -174,15 +192,40 @@ export class VoiceHandler {
       throw new Error("File path not available");
     }
 
-    const token = process.env.TELEGRAM_BOT_TOKEN;
-    const fileUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+    const fileUrl = `https://api.telegram.org/file/bot${this.runtimeConfig.telegramBotToken}/${filePath}`;
 
-    const response = await fetch(fileUrl);
+    const response = await boundedFetch(fileUrl, {
+      timeoutMs:
+        this.runtimeConfig.externalRequests.telegramFileDownload.timeoutMs,
+      maxResponseBytes: Math.min(
+        this.runtimeConfig.voice.maxFileSizeBytes,
+        this.runtimeConfig.externalRequests.telegramFileDownload
+          .maxResponseBytes,
+      ),
+      safeToRetry: true,
+    });
     if (!response.ok) {
-      throw new Error(`Failed to download file: ${response.status}`);
+      throw new Error(`Telegram file download failed with ${response.status}`);
     }
 
     const arrayBuffer = await response.arrayBuffer();
     return Buffer.from(arrayBuffer);
+  }
+
+  private errorKind(error: unknown): string {
+    return error instanceof Error ? error.name : "UnknownError";
+  }
+
+  private formatByteLimit(bytes: number): string {
+    const mebibyte = 1024 * 1024;
+    const kibibyte = 1024;
+    if (bytes >= mebibyte) {
+      const value = bytes / mebibyte;
+      return `${Number.isInteger(value) ? value : value.toFixed(1)} МиБ`;
+    }
+    if (bytes >= kibibyte) {
+      return `${Math.ceil(bytes / kibibyte)} КиБ`;
+    }
+    return `${bytes} байт`;
   }
 }

@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Backend**: TypeScript, Node.js, NestJS
 - **Telegram**: grammy library
 - **Database**: PostgreSQL with Prisma ORM
-- **AI Services**: Cloud.ru (Whisper STT, LLM), ElevenLabs (TTS) - all behind interfaces
+- **AI Services**: Cloud.ru (Whisper STT, LLM) behind interfaces
 
 ## Commands
 
@@ -49,8 +49,8 @@ src/
     │   ├── telegram.service.ts      # Bot initialization, handler registration
     │   └── handlers/                # start, voice, report, settings handlers
     ├── ai/                          # Interface-based AI services
-    │   ├── interfaces/              # IWhisperService, ILLMService, ITTSService
-    │   └── services/                # Cloud.ru & ElevenLabs implementations
+    │   ├── interfaces/              # IWhisperService, ILLMService
+    │   └── services/                # Cloud.ru implementations
     ├── user/                        # User registration, settings management
     ├── prompt/                      # Voice question management
     ├── response/                    # Voice response processing pipeline
@@ -61,7 +61,7 @@ src/
 
 ### AI Service Pattern
 
-AI services use injection tokens (`WHISPER_SERVICE`, `LLM_SERVICE`, `TTS_SERVICE`) allowing implementation swapping:
+AI services use injection tokens (`WHISPER_SERVICE`, `LLM_SERVICE`) allowing implementation swapping:
 ```typescript
 @Inject(WHISPER_SERVICE) private whisper: IWhisperService
 ```
@@ -84,7 +84,6 @@ Six tables (see `prisma/schema.prisma`):
 TELEGRAM_BOT_TOKEN    # Required
 DATABASE_URL          # PostgreSQL connection
 CLOUD_RU_API_KEY      # For Whisper STT and LLM
-ELEVENLABS_API_KEY    # For TTS (optional)
 LLM_MODEL             # e.g., Qwen/Qwen3-235B-A22B-Instruct-2507
 ```
 

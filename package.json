@@ -19,6 +19,8 @@
     "seed": "ts-node prisma/seed.ts"
   },
   "dependencies": {
+    "@grammyjs/runner": "2.0.3",
+    "@js-temporal/polyfill": "0.5.1",
     "@nestjs/common": "^11.1.12",
     "@nestjs/core": "^11.1.12",
     "@nestjs/platform-express": "^11.1.12",

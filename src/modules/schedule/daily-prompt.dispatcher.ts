@@ -1,68 +1,119 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { User } from "@prisma/client";
-import { Bot } from "grammy";
-import { IMessageDispatcher } from "./message-dispatcher.interface";
-import { PromptService } from "../prompt";
+import { Bot, GrammyError, HttpError } from "grammy";
+import {
+  DeliveryClaim,
+  DeliveryOutcome,
+  IMessageDispatcher,
+} from "./message-dispatcher.interface";
+import { ScheduleService } from "./schedule.service";
 
-/**
- * Dispatcher for daily prompts.
- * Handles the "what to send" logic - getting a random prompt and sending it to the user.
- */
 @Injectable()
 export class DailyPromptDispatcher implements IMessageDispatcher {
   private readonly logger = new Logger(DailyPromptDispatcher.name);
   private bot: Bot | null = null;
 
-  constructor(private readonly promptService: PromptService) {}
+  constructor(private readonly scheduleService: ScheduleService) {}
 
-  /**
-   * Set the bot instance for sending messages.
-   * Called by TelegramModule during initialization.
-   */
   setBot(bot: Bot): void {
     this.bot = bot;
   }
 
-  async dispatch(user: User): Promise<boolean> {
+  async dispatch(claim: DeliveryClaim): Promise<DeliveryOutcome> {
     if (!this.bot) {
       this.logger.error("Bot not initialized");
-      return false;
+      return "not_attempted";
+    }
+
+    const attemptedAt = await this.scheduleService.beginDeliveryAttempt(claim);
+    if (!attemptedAt) {
+      return "not_attempted";
+    }
+
+    const chatId = claim.user.telegramId.toString();
+    const text =
+      `🎤 Тема дня: ${claim.prompt.topic}\n\n` +
+      "Ответь голосовым сообщением на английском.";
+
+    if (!claim.prompt.audioFileId) {
+      try {
+        await this.bot.api.sendMessage(chatId, text);
+        return this.completeSuccess(claim, attemptedAt);
+      } catch (error) {
+        return this.completeFailure(claim, attemptedAt, error);
+      }
     }
 
     try {
-      const prompt = await this.promptService.getRandomActivePrompt();
-
-      if (!prompt) {
-        this.logger.warn("No active prompts available");
-        return false;
-      }
-
-      await this.promptService.recordPromptSent(user.id, prompt.id);
-
-      const chatId = Number(user.telegramId);
-
-      if (prompt.audioFileId) {
-        try {
-          await this.bot.api.sendVoice(chatId, prompt.audioFileId, {
-            caption: `🎤 Тема дня: ${prompt.topic}\n\nПрослушай и ответь голосовым сообщением.`,
-          });
-        } catch {
-          await this.bot.api.sendMessage(
-            chatId,
-            `🎤 Тема дня: ${prompt.topic}\n\nОтветь голосовым сообщением на английском.`,
-          );
-        }
-      } else {
-        await this.bot.api.sendMessage(
-          chatId,
-          `🎤 Тема дня: ${prompt.topic}\n\nОтветь голосовым сообщением на английском.`,
-        );
-      }
-
-      return true;
+      await this.bot.api.sendVoice(chatId, claim.prompt.audioFileId, {
+        caption:
+          `🎤 Тема дня: ${claim.prompt.topic}\n\n` +
+          "Прослушай и ответь голосовым сообщением.",
+      });
+      return this.completeSuccess(claim, attemptedAt);
     } catch (error) {
-      this.logger.warn(`Failed to send prompt to user ${user.id}: ${error}`);
-      return false;
+      if (!(error instanceof GrammyError)) {
+        return this.completeFailure(claim, attemptedAt, error);
+      }
+    }
+
+    try {
+      await this.bot.api.sendMessage(chatId, text);
+      return this.completeSuccess(claim, attemptedAt);
+    } catch (error) {
+      return this.completeFailure(claim, attemptedAt, error);
+    }
+  }
+
+  private async completeSuccess(
+    claim: DeliveryClaim,
+    attemptedAt: Date,
+  ): Promise<DeliveryOutcome> {
+    try {
+      const completed = await this.scheduleService.completeDeliverySuccess(
+        claim,
+        attemptedAt,
+      );
+      return completed ? "sent" : "pending";
+    } catch {
+      this.logger.error(
+        `Could not persist successful delivery for user prompt ${claim.userPromptId}`,
+      );
+      return "pending";
+    }
+  }
+
+  private async completeFailure(
+    claim: DeliveryClaim,
+    attemptedAt: Date,
+    error: unknown,
+  ): Promise<DeliveryOutcome> {
+    try {
+      if (error instanceof GrammyError) {
+        const completed =
+          await this.scheduleService.completeDeliveryDefiniteFailure(
+            claim,
+            attemptedAt,
+          );
+        this.logger.warn(
+          `Telegram rejected delivery for user prompt ${claim.userPromptId}`,
+        );
+        return completed ? "failed" : "pending";
+      }
+
+      await this.scheduleService.completeDeliveryAmbiguousFailure(
+        claim,
+        attemptedAt,
+      );
+      const kind = error instanceof HttpError ? "transport" : "unknown";
+      this.logger.warn(
+        `Telegram delivery outcome is ambiguous for user prompt ${claim.userPromptId} (${kind})`,
+      );
+      return "pending";
+    } catch {
+      this.logger.error(
+        `Could not persist failed delivery outcome for user prompt ${claim.userPromptId}`,
+      );
+      return "pending";
     }
   }
 }

@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { Prompt, UserPrompt } from "@prisma/client";
+import { Prompt, UserPrompt, UserPromptDeliveryStatus } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database";
 
 @Injectable()
@@ -29,15 +29,6 @@ export class PromptService {
     });
   }
 
-  async recordPromptSent(userId: string, promptId: string): Promise<UserPrompt> {
-    return this.prisma.userPrompt.create({
-      data: {
-        userId,
-        promptId,
-      },
-    });
-  }
-
   async getUserPromptById(id: string): Promise<UserPrompt | null> {
     return this.prisma.userPrompt.findUnique({
       where: { id },
@@ -46,8 +37,11 @@ export class PromptService {
 
   async getLatestUserPrompt(userId: string): Promise<UserPrompt | null> {
     return this.prisma.userPrompt.findFirst({
-      where: { userId },
-      orderBy: { sentAt: "desc" },
+      where: {
+        userId,
+        deliveryStatus: UserPromptDeliveryStatus.sent,
+      },
+      orderBy: [{ sentAt: "desc" }, { id: "desc" }],
     });
   }
 }

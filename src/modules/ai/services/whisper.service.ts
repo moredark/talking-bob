@@ -1,5 +1,9 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
+import { RUNTIME_CONFIG } from "../../../config/runtime-config.module";
+import { RuntimeConfig } from "../../../config/runtime.config";
+import { boundedFetch } from "../../../infrastructure/http";
 import { IWhisperService, TranscriptionResult } from "../interfaces";
+import { AiRequestLimiterService } from "./ai-request-limiter.service";
 
 @Injectable()
 export class WhisperService implements IWhisperService {
@@ -8,16 +12,15 @@ export class WhisperService implements IWhisperService {
     "https://foundation-models.api.cloud.ru/v1/audio/transcriptions";
   private readonly model = "openai/whisper-large-v3";
 
+  constructor(
+    @Inject(RUNTIME_CONFIG) private readonly runtimeConfig: RuntimeConfig,
+    private readonly requestLimiter: AiRequestLimiterService,
+  ) {}
+
   async transcribe(
     audioBuffer: Buffer,
     language: string = "ru",
   ): Promise<TranscriptionResult> {
-    const apiKey = process.env.CLOUD_RU_API_KEY;
-
-    if (!apiKey) {
-      throw new Error("CLOUD_RU_API_KEY is not defined");
-    }
-
     const formData = new FormData();
     const blob = new Blob([new Uint8Array(audioBuffer)], { type: "audio/ogg" });
     formData.append("file", blob, "audio.ogg");
@@ -27,33 +30,35 @@ export class WhisperService implements IWhisperService {
     formData.append("language", language);
 
     try {
-      const response = await fetch(this.apiUrl, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: formData,
-      });
+      const response = await this.requestLimiter.run((signal) =>
+        boundedFetch(this.apiUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.runtimeConfig.cloudRuApiKey}`,
+          },
+          body: formData,
+          signal,
+          timeoutMs: this.runtimeConfig.externalRequests.whisper.timeoutMs,
+          maxResponseBytes:
+            this.runtimeConfig.externalRequests.whisper.maxResponseBytes,
+        }),
+      );
 
       if (!response.ok) {
-        const errorText = await response.text();
-        this.logger.error(
-          `Whisper API error: ${response.status} - ${errorText}`,
-        );
+        this.logger.error(`Whisper API returned status ${response.status}`);
         throw new Error(`Whisper API error: ${response.status}`);
       }
 
       const responseText = await response.text();
       const text = this.parseTranscriptionResponse(responseText);
-
-      this.logger.log(`Transcription successful: ${text.substring(0, 50)}...`);
+      this.logger.log("Transcription completed");
 
       return {
         text: text.trim(),
         language,
       };
     } catch (error) {
-      this.logger.error("Transcription failed:", error);
+      this.logger.error(`Transcription failed (${this.errorKind(error)})`);
       throw error;
     }
   }
@@ -61,12 +66,14 @@ export class WhisperService implements IWhisperService {
   private parseTranscriptionResponse(responseText: string): string {
     try {
       const parsed = JSON.parse(responseText);
-      if (parsed.text) {
-        return parsed.text;
-      }
+      if (parsed.text) return parsed.text;
       return responseText;
     } catch {
       return responseText;
     }
+  }
+
+  private errorKind(error: unknown): string {
+    return error instanceof Error ? error.name : "UnknownError";
   }
 }

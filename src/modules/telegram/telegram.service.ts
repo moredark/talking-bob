@@ -1,17 +1,56 @@
-import { Injectable, OnModuleInit, Logger } from "@nestjs/common";
-import { Bot, Context } from "grammy";
-import { StartHandler } from "./handlers/start.handler";
-import { VoiceHandler } from "./handlers/voice.handler";
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+  Optional,
+} from "@nestjs/common";
+import {
+  createConcurrentSink,
+  createRunner,
+  createSource,
+  createUpdateFetcher,
+  RunnerHandle,
+  sequentialize,
+} from "@grammyjs/runner";
+import { Bot, Context, type BotError } from "grammy";
+import { RUNTIME_CONFIG } from "../../config/runtime-config.module";
+import { RuntimeConfig } from "../../config/runtime.config";
+import {
+  AiRequestLimiterClosedError,
+  AiRequestLimiterService,
+} from "../ai";
+import { DailyPromptDispatcher } from "../schedule";
 import { ReportHandler } from "./handlers/report.handler";
 import { SettingsHandler } from "./handlers/settings.handler";
-import { DailyPromptDispatcher } from "../schedule";
+import { StartHandler } from "./handlers/start.handler";
+import { VoiceHandler } from "./handlers/voice.handler";
+
+class TelegramRuntimeClosedError extends Error {
+  constructor() {
+    super("Telegram API call rejected after the runtime shutdown deadline");
+    this.name = "TelegramRuntimeClosedError";
+  }
+}
+
+type TelegramUpdate = Parameters<Bot["handleUpdate"]>[0];
 
 @Injectable()
-export class TelegramService implements OnModuleInit {
+export class TelegramService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TelegramService.name);
   private readonly botStartRetryMs = 30_000;
+  private readonly bot: Bot;
+  private readonly callbackAcknowledgements = new Set<Promise<unknown>>();
+  private readonly telegramBusinessTasks = new Set<Promise<void>>();
+  private runner?: RunnerHandle;
+  private runnerTask?: Promise<void>;
+  private startupPromise?: Promise<void>;
   private botStartRetryTimer?: NodeJS.Timeout;
-  private bot: Bot;
+  private restartAttempted = false;
+  private shuttingDown = false;
+  private telegramApiClosed = false;
+  private shutdownDeadline?: number;
 
   constructor(
     private readonly startHandler: StartHandler,
@@ -19,90 +58,54 @@ export class TelegramService implements OnModuleInit {
     private readonly reportHandler: ReportHandler,
     private readonly settingsHandler: SettingsHandler,
     private readonly dailyPromptDispatcher: DailyPromptDispatcher,
+    @Inject(RUNTIME_CONFIG) private readonly runtimeConfig: RuntimeConfig,
+    @Optional() private readonly aiRequestLimiter?: AiRequestLimiterService,
   ) {
-    const token = process.env.TELEGRAM_BOT_TOKEN;
-
-    if (!token) {
-      throw new Error("TELEGRAM_BOT_TOKEN is not defined");
-    }
-
-    this.bot = new Bot(token);
+    this.bot = new Bot(runtimeConfig.telegramBotToken, {
+      client: {
+        apiRoot: "https://api.telegram.org",
+        timeoutSeconds: runtimeConfig.telegram.apiTimeoutMs / 1000,
+      },
+    });
+    this.bot.api.config.use((previous, method, payload, signal) => {
+      if (this.isTelegramApiClosed()) {
+        return Promise.reject(new TelegramRuntimeClosedError());
+      }
+      return previous(method, payload, signal);
+    });
   }
 
-  async onModuleInit() {
+  onModuleInit(): void {
     this.registerHandlers();
     this.dailyPromptDispatcher.setBot(this.bot);
-    void this.startBot();
+    this.startRunner();
   }
 
-  private registerHandlers() {
-    this.bot.command("start", (ctx) => this.startHandler.handle(ctx));
-    this.bot.command("report", (ctx) => this.reportHandler.handle(ctx));
-    this.bot.command("settings", (ctx) => this.settingsHandler.handle(ctx));
+  async onModuleDestroy(): Promise<void> {
+    if (this.shuttingDown) return;
+    this.shuttingDown = true;
+    const deadline = Date.now() + this.runtimeConfig.shutdown.drainTimeoutMs;
+    this.shutdownDeadline = deadline;
+    this.aiRequestLimiter?.close();
 
-    this.bot.on("message:voice", (ctx) => this.voiceHandler.handle(ctx));
-
-    this.bot.callbackQuery("report", async (ctx) => {
-      await ctx.answerCallbackQuery();
-      await this.reportHandler.handle(ctx);
-    });
-
-    this.bot.callbackQuery("new_question", async (ctx) => {
-      await ctx.answerCallbackQuery();
-      await this.startHandler.handle(ctx);
-    });
-
-    this.bot.callbackQuery("toggle_daily", async (ctx) => {
-      await ctx.answerCallbackQuery();
-      await this.settingsHandler.handleToggle(ctx);
-    });
-
-    this.bot.callbackQuery(/^set_time_\d+_\d+$/, async (ctx) => {
-      await ctx.answerCallbackQuery();
-      await this.settingsHandler.handleTimeSelect(ctx, ctx.callbackQuery.data);
-    });
-
-    this.bot.callbackQuery(/^set_tone_(friendly|playful)$/, async (ctx) => {
-      await ctx.answerCallbackQuery();
-      await this.settingsHandler.handleToneSelect(ctx, ctx.callbackQuery.data);
-    });
-
-    this.bot.catch((err) => {
-      this.logger.error("Bot error:", err);
-    });
-  }
-
-  private async startBot() {
-    if (this.bot.isRunning()) {
-      return;
+    if (this.botStartRetryTimer) {
+      clearTimeout(this.botStartRetryTimer);
+      this.botStartRetryTimer = undefined;
     }
 
-    this.logger.log("Starting Telegram bot...");
+    const shutdownWork = Promise.allSettled([
+      this.stopRunner(),
+      this.drainTelegramBusinessTasks(),
+      this.drainCallbackAcknowledgements(),
+      this.aiRequestLimiter?.drain() ?? Promise.resolve(),
+    ]).then(() => undefined);
 
-    try {
-      await this.bot.api.setMyCommands([
-        { command: "start", description: "Начать / Новый вопрос" },
-        { command: "report", description: "Получить отчёт по разговору" },
-        { command: "settings", description: "Настройки ежедневного вопроса" },
-      ]);
-
-      void this.bot
-        .start({
-          onStart: () => this.logger.log("Telegram bot started"),
-        })
-        .catch((error) => {
-          this.logger.error(
-            "Telegram bot stopped with an error",
-            this.formatError(error),
-          );
-          this.scheduleBotRestart();
-        });
-    } catch (error) {
-      this.logger.error(
-        `Telegram bot startup failed; retrying in ${this.botStartRetryMs / 1000}s`,
-        this.formatError(error),
+    const drained = await this.waitUntilDeadline(shutdownWork, deadline);
+    this.telegramApiClosed = true;
+    if (!drained) {
+      this.logger.warn(
+        `Runtime drain timed out with ${this.runner?.size() ?? 0} Telegram updates, ${this.telegramBusinessTasks.size} Telegram business tasks, ${this.callbackAcknowledgements.size} callback acknowledgements, ${this.aiRequestLimiter?.active ?? 0} active AI requests, and ${this.aiRequestLimiter?.pending ?? 0} pending AI requests`,
       );
-      this.scheduleBotRestart();
     }
   }
 
@@ -110,22 +113,245 @@ export class TelegramService implements OnModuleInit {
     return this.bot;
   }
 
-  private scheduleBotRestart() {
-    if (this.botStartRetryTimer || this.bot.isRunning()) {
+  private registerHandlers(): void {
+    // This outer middleware is the service lifecycle boundary. It rejects
+    // admission after shutdown starts and observes every accepted update until
+    // all downstream business middleware has settled.
+    this.bot.use((ctx, next) => this.trackTelegramBusinessTask(ctx, next));
+    // Callback acknowledgements must begin before sequentialize can wait on a
+    // previous update for the same chat.
+    this.bot.use((ctx, next) => {
+      if (ctx.callbackQuery) this.trackCallbackAcknowledgement(ctx);
+      return next();
+    });
+    this.bot.use(sequentialize((ctx) => this.updateKey(ctx)));
+
+    this.bot.command("start", (ctx) => this.startHandler.handle(ctx));
+    this.bot.command("report", (ctx) => this.reportHandler.handle(ctx));
+    this.bot.command("settings", (ctx) => this.settingsHandler.handle(ctx));
+    this.bot.on("message:voice", (ctx) => this.voiceHandler.handle(ctx));
+
+    this.bot.callbackQuery("report", (ctx) => this.reportHandler.handle(ctx));
+    this.bot.callbackQuery("new_question", (ctx) =>
+      this.startHandler.handle(ctx),
+    );
+    this.bot.callbackQuery("toggle_daily", (ctx) =>
+      this.settingsHandler.handleToggle(ctx),
+    );
+    this.bot.callbackQuery(/^set_time_\d+_\d+$/, (ctx) =>
+      this.settingsHandler.handleTimeSelect(ctx, ctx.callbackQuery.data),
+    );
+    this.bot.callbackQuery(/^set_tone_(friendly|playful)$/, (ctx) =>
+      this.settingsHandler.handleToneSelect(ctx, ctx.callbackQuery.data),
+    );
+
+    this.bot.catch((error) => {
+      this.logger.error(
+        `Telegram middleware failed (${this.errorKind(error.error)})`,
+      );
+    });
+  }
+
+  private trackTelegramBusinessTask(
+    ctx: Context,
+    next: () => void | Promise<void>,
+  ): Promise<void> {
+    if (this.shuttingDown) return Promise.resolve();
+    const downstream = Promise.resolve(next());
+    let tracked!: Promise<void>;
+    tracked = downstream.finally(() => {
+      this.telegramBusinessTasks.delete(tracked);
+    });
+    this.telegramBusinessTasks.add(tracked);
+    return tracked;
+  }
+
+  private trackCallbackAcknowledgement(ctx: Context): void {
+    const acknowledgement = ctx.answerCallbackQuery();
+    this.callbackAcknowledgements.add(acknowledgement);
+    void acknowledgement
+      .catch((error: unknown) => {
+        this.logger.warn(
+          `Telegram callback acknowledgement failed for update ${ctx.update.update_id} (${this.errorKind(error)})`,
+        );
+      })
+      .finally(() => {
+        this.callbackAcknowledgements.delete(acknowledgement);
+      });
+  }
+
+  private updateKey(ctx: Context): string {
+    if (ctx.chat) return `chat:${ctx.chat.id}`;
+    if (ctx.from) return `user:${ctx.from.id}`;
+    return `update:${ctx.update.update_id}`;
+  }
+
+  private startRunner(): void {
+    if (this.shuttingDown || this.startupPromise || this.runner?.isRunning()) {
       return;
     }
 
+    this.logger.log("Starting Telegram bot...");
+    const startupPromise = this.launchRunner();
+    this.startupPromise = startupPromise;
+    void startupPromise
+      .catch((error: unknown) => {
+        this.logger.error(
+          `Telegram runner failed to start (${this.errorKind(error)})`,
+        );
+        this.scheduleRunnerRestart();
+      })
+      .finally(() => {
+        if (this.startupPromise === startupPromise) {
+          this.startupPromise = undefined;
+        }
+      });
+  }
+
+  private async launchRunner(): Promise<void> {
+    await this.bot.api.setMyCommands([
+      { command: "start", description: "Начать / Новый вопрос" },
+      { command: "report", description: "Получить отчёт по разговору" },
+      { command: "settings", description: "Настройки ежедневного вопроса" },
+    ]);
+    if (this.shuttingDown) return;
+
+    const concurrency = this.runtimeConfig.concurrency.telegramUpdates;
+    const fetchUpdates = createUpdateFetcher(this.bot, {
+      fetch: { allowed_updates: ["message", "callback_query"] },
+    });
+    const supplier = {
+      supply: async (
+        batchSize: number,
+        signal: Parameters<typeof fetchUpdates>[1],
+      ) => {
+        await this.bot.init();
+        supplier.supply = fetchUpdates;
+        return fetchUpdates(batchSize, signal);
+      },
+    };
+    const source = createSource<TelegramUpdate>(supplier);
+    // runner@2.0.3 starts a source at Infinity. Set the initial pace before
+    // start so even the first Telegram batch respects the hard admission cap.
+    source.setGeneratorPace(concurrency);
+    const sink = createConcurrentSink<TelegramUpdate, BotError<Context>>(
+      { consume: (update) => this.bot.handleUpdate(update) },
+      async (error) => {
+        await this.bot.errorHandler(error);
+      },
+      { concurrency },
+    );
+    const runner = createRunner(source, sink);
+    runner.start();
+    this.runner = runner;
+    this.logger.log("Telegram bot started");
+
+    const task = runner.task();
+    if (!task) return;
+    this.runnerTask = task;
+    void task
+      .catch((error: unknown) => {
+        this.logger.error(
+          `Telegram runner stopped (${this.errorKind(error)})`,
+        );
+      })
+      .finally(() => {
+        if (this.runner === runner) this.runner = undefined;
+        if (this.runnerTask === task) this.runnerTask = undefined;
+        this.scheduleRunnerRestart();
+      });
+  }
+
+  private scheduleRunnerRestart(): void {
+    if (
+      this.shuttingDown ||
+      this.botStartRetryTimer ||
+      this.runner?.isRunning()
+    ) {
+      return;
+    }
+
+    if (this.restartAttempted) {
+      this.logger.error(
+        "Telegram runner exhausted its restart budget; requesting shutdown",
+      );
+      process.kill(process.pid, "SIGTERM");
+      return;
+    }
+
+    this.restartAttempted = true;
+    this.logger.warn(
+      `Restarting Telegram runner in ${this.botStartRetryMs / 1000}s`,
+    );
     this.botStartRetryTimer = setTimeout(() => {
       this.botStartRetryTimer = undefined;
-      void this.startBot();
+      this.startRunner();
     }, this.botStartRetryMs);
   }
 
-  private formatError(error: unknown): string {
-    if (error instanceof Error) {
-      return error.stack || error.message;
-    }
+  private async stopRunner(): Promise<void> {
+    await this.startupPromise?.catch(() => undefined);
+    const runner = this.runner;
+    if (!runner) return;
 
-    return String(error);
+    const stop = runner.stop().catch((error: unknown) => {
+      this.logger.error(
+        `Telegram runner stop failed (${this.errorKind(error)})`,
+      );
+    });
+    const task = this.runnerTask ?? runner.task();
+    await Promise.allSettled(task ? [stop, task] : [stop]);
+  }
+
+  private async drainCallbackAcknowledgements(): Promise<void> {
+    while (this.callbackAcknowledgements.size > 0) {
+      await Promise.allSettled([...this.callbackAcknowledgements]);
+    }
+  }
+
+  private async drainTelegramBusinessTasks(): Promise<void> {
+    while (this.telegramBusinessTasks.size > 0) {
+      await Promise.allSettled([...this.telegramBusinessTasks]);
+    }
+  }
+
+  private waitUntilDeadline(
+    work: Promise<void>,
+    deadline: number,
+  ): Promise<boolean> {
+    const remainingMs = Math.max(0, deadline - Date.now());
+    let timeout: NodeJS.Timeout | undefined;
+    return Promise.race([
+      work.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timeout = setTimeout(() => {
+          this.telegramApiClosed = true;
+          this.aiRequestLimiter?.abort(
+            new AiRequestLimiterClosedError(
+              "AI request aborted at shutdown deadline",
+            ),
+          );
+          resolve(false);
+        }, remainingMs);
+      }),
+    ]).finally(() => {
+      if (timeout) clearTimeout(timeout);
+    });
+  }
+
+  private isTelegramApiClosed(): boolean {
+    if (this.telegramApiClosed) return true;
+    if (
+      this.shutdownDeadline !== undefined &&
+      Date.now() >= this.shutdownDeadline
+    ) {
+      this.telegramApiClosed = true;
+      return true;
+    }
+    return false;
+  }
+
+  private errorKind(error: unknown): string {
+    return error instanceof Error ? error.name : "UnknownError";
   }
 }

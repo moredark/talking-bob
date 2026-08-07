@@ -7,6 +7,18 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum UserPromptSource {
+  manual
+  scheduled
+  legacy
+}
+
+enum UserPromptDeliveryStatus {
+  pending
+  sent
+  failed
+}
+
 model User {
   id                 String    @id @default(uuid())
   telegramId         BigInt    @unique
@@ -16,14 +28,14 @@ model User {
   dailyPromptMinute  Int       @default(0)
   timezone           String    @default("Europe/Moscow")
   agentTone          String    @default("friendly")
-  lastPromptSentAt   DateTime?
-  nextPromptAt       DateTime?
+  lastPromptSentAt   DateTime? @db.Timestamptz(3)
+  nextPromptAt       DateTime? @db.Timestamptz(3)
   languageLevel      String?
   status             String    @default("active")
   bannedAt           DateTime?
   bannedReason       String?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  createdAt          DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime  @updatedAt @db.Timestamptz(3)
 
   userPrompts   UserPrompt[]
   userResponses UserResponse[]
@@ -42,7 +54,7 @@ model Prompt {
   tags        String[] @default([])
   isActive    Boolean  @default(true)
   sortOrder   Int      @default(0)
-  createdAt   DateTime @default(now())
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
 
   userPrompts UserPrompt[]
 
@@ -50,19 +62,34 @@ model Prompt {
 }
 
 model UserPrompt {
-  id       String   @id @default(uuid())
-  userId   String
-  promptId String
-  sentAt   DateTime @default(now())
+  id                     String                   @id @default(uuid())
+  userId                 String
+  promptId               String
+  source                 UserPromptSource         @default(manual)
+  deliveryStatus         UserPromptDeliveryStatus @default(pending)
+  createdAt              DateTime                 @default(now()) @db.Timestamptz(3)
+  sentAt                 DateTime?                @db.Timestamptz(3)
+  scheduledFor           DateTime?                @db.Timestamptz(3)
+  scheduledOccurrenceKey String?                  @db.VarChar(64)
+  scheduledLocalDate     DateTime?                @db.Date
+  timezoneSnapshot       String?                  @db.VarChar(128)
+  claimToken             String?                  @db.Uuid
+  claimExpiresAt         DateTime?                @db.Timestamptz(3)
+  deliveryAttemptedAt    DateTime?                @db.Timestamptz(3)
+  lastDeliveryErrorCode  String?                  @db.VarChar(64)
+  lastDeliveryErrorAt    DateTime?                @db.Timestamptz(3)
 
   user   User   @relation(fields: [userId], references: [id])
   prompt Prompt @relation(fields: [promptId], references: [id])
 
-  userResponse          UserResponse?
-  conversationMessages  ConversationMessage[]
+  userResponse         UserResponse?
+  conversationMessages ConversationMessage[]
 
   @@index([userId])
   @@index([promptId])
+  @@index([userId, deliveryStatus, sentAt])
+  @@index([deliveryStatus, deliveryAttemptedAt, claimExpiresAt], map: "user_prompts_delivery_retry_idx")
+  @@index([scheduledOccurrenceKey])
   @@map("user_prompts")
 }
 
@@ -72,7 +99,7 @@ model ConversationMessage {
   role         String
   content      String
   voiceFileId  String?
-  createdAt    DateTime @default(now())
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
 
   userPrompt UserPrompt @relation(fields: [userPromptId], references: [id])
 
@@ -87,7 +114,7 @@ model UserResponse {
   voiceFileId  String
   transcript   String?
   analysis     String?
-  createdAt    DateTime @default(now())
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
 
   user       User       @relation(fields: [userId], references: [id])
   userPrompt UserPrompt @relation(fields: [userPromptId], references: [id])
@@ -100,7 +127,7 @@ model UserRequest {
   id        String   @id @default(uuid())
   userId    String
   action    String
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id])
 
