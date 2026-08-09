@@ -1,0 +1,12 @@
+services:
+  admin:
+    image: "${TALKING_BOB_ADMIN_IMAGE:?Set TALKING_BOB_ADMIN_IMAGE to an immutable repository reference}@${TALKING_BOB_ADMIN_DIGEST:?Set TALKING_BOB_ADMIN_DIGEST to its sha256 digest}"
+    restart: unless-stopped
+    environment:
+      PORT: ${PORT:-3000}
+    ports:
+      - "127.0.0.1:${ADMIN_PORT:-8080}:8080"
+    depends_on:
+      app:
+        condition: service_healthy
+
