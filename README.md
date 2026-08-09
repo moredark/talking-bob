@@ -16,11 +16,19 @@ The application requires `DATABASE_URL`, `TELEGRAM_BOT_TOKEN`, and `CLOUD_RU_API
 
 ```bash
 cp .env.example .env
-# Set bot/provider secrets and strong URI-unreserved POSTGRES_* credentials.
-docker compose up -d --build
+# Set bot/provider secrets, strong URI-unreserved POSTGRES_* credentials,
+# and ADMIN_USERNAME/ADMIN_PASSWORD before the first start.
+npm run docker:up
 ```
 
-Compose starts PostgreSQL, waits for it to become healthy, applies production migrations, idempotently seeds missing built-in prompts, and then starts the bot. The application listens on `127.0.0.1:3001` on the host.
+The local Compose stack starts PostgreSQL, waits for it to become healthy, applies production migrations, idempotently seeds missing built-in prompts and the configured admin, and then starts the bot and admin UI. The application listens on `127.0.0.1:3001` and the admin UI on `127.0.0.1:8080` by default.
+
+`ADMIN_USERNAME` and `ADMIN_PASSWORD` must both be present in `.env` when the
+initialization service runs. If the stack was started before they were set, add
+them and run `npm run docker:init`. This reruns only the idempotent seed and
+creates a missing admin; it does not apply migrations or change the password of
+an existing username. Use `docker:up` or `docker:recreate` for the full lifecycle,
+including migrations.
 
 ## Quick start with host Node.js
 
@@ -29,7 +37,7 @@ Start a PostgreSQL server first and create the database named by `DATABASE_URL`.
 ```bash
 cp .env.example .env
 # Edit .env and set DATABASE_URL, TELEGRAM_BOT_TOKEN, and CLOUD_RU_API_KEY.
-docker compose up -d db
+npm run docker -- up -d db
 npm ci
 npm run prisma:generate
 npm run prisma:migrate
@@ -38,7 +46,7 @@ npm run build
 npm run start
 ```
 
-If PostgreSQL is already running on the host, omit `docker compose up -d db` and point `DATABASE_URL` at that instance.
+If PostgreSQL is already running on the host, omit `npm run docker -- up -d db` and point `DATABASE_URL` at that instance.
 
 ## Useful commands
 
@@ -52,6 +60,27 @@ npm run test:container # build and inspect the runtime/init images
 npm run test:operations # smoke, PostgreSQL recovery/timezone and container gates
 npm run deploy:init    # apply production migrations and seed missing data
 ```
+
+Local Docker commands use `docker-compose.yml` together with
+`compose.tailscale.yml`:
+
+```bash
+npm run docker:config   # validate the resolved Compose configuration
+npm run docker:build    # build local images
+npm run docker:up       # build/start the stack and run migrations
+npm run docker:recreate # rebuild/recreate the stack and run migrations
+npm run docker:ps       # show service status
+npm run docker:logs     # follow the latest 200 log lines
+npm run docker:init     # rerun the seed and create a missing admin
+npm run docker:down     # stop the stack; named volumes are preserved
+```
+
+`docker:recreate` briefly interrupts and recreates all containers, while
+preserving the database volume. `docker:init` does not apply migrations or
+change the password when `ADMIN_USERNAME` already exists.
+
+Pass any Compose subcommand through the base alias when a helper is not enough,
+for example `npm run docker -- logs app`.
 
 The PostgreSQL and container gates require a working Docker daemon. They use
 uniquely labelled temporary resources and remove only those owned by the run.

@@ -1,52 +1,52 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { BarChart3, LogOut } from "@lucide/vue";
 import { useAuth } from "../composables/useAuth";
-import IconSymbol from "./IconSymbol.vue";
+import AdminSidebarNavigation from "./AdminSidebarNavigation.vue";
+import { adminNavigationItems } from "./adminNavigation";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 
 const route = useRoute();
 const router = useRouter();
 const { state, logout } = useAuth();
-const drawerOpen = ref(false);
-const items = [
-  { path: "/", label: "Дашборд", icon: "dashboard" as const },
-  { path: "/users", label: "Пользователи", icon: "users" as const },
-  { path: "/prompts", label: "Промпты", icon: "prompts" as const },
-  { path: "/topics", label: "Статистика тем", icon: "topics" as const },
-  { path: "/error-logs", label: "Логи ошибок", icon: "errors" as const },
-];
 const selected = (path: string) => path === "/" ? route.path === "/" : route.path.startsWith(path);
-const currentSection = computed(() => items.find((item) => selected(item.path))?.label ?? "Панель администратора");
-function navigate(path: string) { drawerOpen.value = false; router.push(path); }
+const currentSection = computed(() => adminNavigationItems.find((item) => selected(item.path))?.label ?? "Панель администратора");
 function signOut() { logout(); router.replace("/login"); }
 </script>
 
 <template>
-  <div class="admin-shell">
-    <aside class="sidebar" aria-label="Основная навигация">
-      <div class="brand"><span class="brand__mark">TB</span><span><strong>Talking Bob</strong><small>Управление</small></span></div>
-      <nav class="nav-list">
-        <button v-for="item in items" :key="item.path" type="button" :class="['nav-item', { 'is-active': selected(item.path) }]" :aria-current="selected(item.path) ? 'page' : undefined" @click="navigate(item.path)">
-          <IconSymbol :name="item.icon" />{{ item.label }}
-        </button>
-      </nav>
-      <div class="sidebar__footer"><div class="admin-avatar">{{ state.user?.username?.slice(0, 1).toUpperCase() }}</div><div class="admin-name"><small>Администратор</small><strong>{{ state.user?.username }}</strong></div><el-button text circle aria-label="Выйти" @click="signOut"><IconSymbol name="logout" /></el-button></div>
-    </aside>
-
-    <div class="main-column">
-      <header class="topbar">
-        <el-button class="mobile-menu" text circle aria-label="Открыть меню" @click="drawerOpen = true"><IconSymbol name="menu" /></el-button>
-        <strong class="topbar__title">{{ currentSection }}</strong>
-        <el-button class="topbar__logout" text aria-label="Выйти из панели администратора" @click="signOut"><IconSymbol name="logout" />Выйти</el-button>
+  <SidebarProvider>
+    <Sidebar collapsible="offcanvas" aria-label="Основная навигация">
+      <SidebarHeader>
+        <div class="flex items-center gap-3 px-2 py-2">
+          <div class="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"><BarChart3 class="size-5" /></div>
+          <div class="min-w-0"><p class="truncate text-sm font-semibold">Talking Bob</p><p class="text-xs text-muted-foreground">Управление</p></div>
+        </div>
+      </SidebarHeader>
+      <SidebarContent>
+        <AdminSidebarNavigation />
+      </SidebarContent>
+      <SidebarFooter>
+        <Separator />
+        <div class="flex items-center gap-3 p-2">
+          <Avatar class="size-8"><AvatarFallback>{{ state.user?.username?.slice(0, 1).toUpperCase() || "A" }}</AvatarFallback></Avatar>
+          <div class="min-w-0 flex-1"><p class="truncate text-xs text-muted-foreground">Администратор</p><p class="truncate text-sm font-medium">{{ state.user?.username }}</p></div>
+          <Button variant="ghost" size="icon-sm" aria-label="Выйти" @click="signOut"><LogOut /></Button>
+        </div>
+      </SidebarFooter>
+    </Sidebar>
+    <SidebarInset>
+      <header class="sticky top-0 flex h-14 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur md:px-6">
+        <SidebarTrigger />
+        <Separator orientation="vertical" class="h-5" />
+        <strong class="text-sm font-medium">{{ currentSection }}</strong>
+        <Button variant="ghost" size="sm" class="ml-auto md:hidden" @click="signOut"><LogOut data-icon="inline-start" />Выйти</Button>
       </header>
-      <main class="content"><router-view /></main>
-    </div>
-
-    <el-drawer v-model="drawerOpen" direction="ltr" size="min(320px, 86vw)" :with-header="false">
-      <div class="brand drawer-brand"><span class="brand__mark">TB</span><span><strong>Talking Bob</strong><small>Управление</small></span></div>
-      <nav class="nav-list" aria-label="Мобильная навигация">
-        <button v-for="item in items" :key="item.path" type="button" :class="['nav-item', { 'is-active': selected(item.path) }]" :aria-current="selected(item.path) ? 'page' : undefined" @click="navigate(item.path)"><IconSymbol :name="item.icon" />{{ item.label }}</button>
-      </nav>
-    </el-drawer>
-  </div>
+      <main class="mx-auto w-full max-w-[1500px] p-4 md:p-8"><router-view /></main>
+    </SidebarInset>
+  </SidebarProvider>
 </template>

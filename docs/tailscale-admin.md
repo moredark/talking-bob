@@ -17,10 +17,24 @@ Tailscale не должны храниться в репозитории или 
 Для локально собираемого Compose используйте дополнительный файл:
 
 ```bash
-docker compose -f docker-compose.yml -f compose.tailscale.yml up -d --build
+npm run docker:up
 curl --fail http://127.0.0.1:${ADMIN_PORT:-8080}/healthz
 curl --fail http://127.0.0.1:${ADMIN_PORT:-8080}/api/health/live
 ```
+
+Команда использует `docker-compose.yml` вместе с `compose.tailscale.yml`.
+Перед первым запуском задайте одновременно `ADMIN_USERNAME` и
+`ADMIN_PASSWORD` в `.env`. Если стек уже запускался без них, добавьте значения
+и выполните `npm run docker:init`. Команда повторно запускает только
+идемпотентный seed и создает отсутствующего администратора; она не применяет
+миграции и не меняет пароль уже существующего `ADMIN_USERNAME`.
+
+Для повседневной работы доступны `npm run docker:ps`, `npm run docker:logs`,
+`npm run docker:recreate` и `npm run docker:down`. Произвольную Compose-команду
+можно передать через базовый alias, например `npm run docker -- logs app`.
+Команды `docker:up` и `docker:recreate` выполняют полный цикл, включая миграции.
+`docker:recreate` кратковременно прерывает работу и пересоздает все контейнеры,
+но сохраняет volume базы данных.
 
 Порт должен слушать только на `127.0.0.1`, что можно проверить командой
 `ss -ltn`. Не меняйте binding на `0.0.0.0`.

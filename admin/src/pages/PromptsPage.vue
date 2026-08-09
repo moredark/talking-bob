@@ -1,100 +1,32 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
-import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from "element-plus";
-import { adminApi } from "../api/admin.api";
-import type { CreatePromptDto, PromptItem, UpdatePromptDto } from "../types";
-import IconSymbol from "../components/IconSymbol.vue";
-import StatePanel from "../components/StatePanel.vue";
-
-const difficulties = [{ value: "easy", label: "Лёгкий" }, { value: "medium", label: "Средний" }, { value: "hard", label: "Сложный" }];
-const availableTags = ["grammar", "vocabulary", "tense", "pronunciation", "fluency", "conversation"];
-const prompts = ref<PromptItem[]>([]);
-const loading = ref(true);
-const error = ref(false);
-const saving = ref(false);
-const deletingId = ref<string | null>(null);
-const dialogOpen = ref(false);
-const editing = ref<PromptItem | null>(null);
-const formRef = ref<FormInstance>();
-const pagination = reactive({ page: 1, limit: 20, total: 0 });
-const form = reactive({ topic: "", textContent: "", audioFileId: "", difficulty: "medium", tags: [] as string[], isActive: true, sortOrder: 0 });
-const rules: FormRules = { topic: [{ required: true, whitespace: true, message: "Введите тему", trigger: "blur" }] };
-const difficultyLabel = (value: string) => difficulties.find(item => item.value === value)?.label || value;
-const difficultyType = (value: string) => value === "easy" ? "success" : value === "hard" ? "danger" : "warning";
-const difficultyFilters = difficulties.map(({ value, label }) => ({ text: label, value }));
-const activeFilters = [{ text: "Активен", value: true }, { text: "Неактивен", value: false }];
-const filterByDifficulty = (value: unknown, row: PromptItem) => row.difficulty === value;
-const filterByActive = (value: unknown, row: PromptItem) => row.isActive === value;
-async function load(page = pagination.page) {
-  loading.value = true; error.value = false;
-  try { const result = await adminApi.getPrompts(page, pagination.limit); prompts.value = result.data; Object.assign(pagination, { page: result.page, limit: result.limit, total: result.total }); }
-  catch { error.value = true; }
-  finally { loading.value = false; }
+import { computed, onMounted, reactive, ref } from "vue"; import { ArrowUpDown, Bot, Pencil, Plus, Trash2 } from "@lucide/vue"; import { toast } from "vue-sonner"; import { adminApi } from "../api/admin.api"; import type { CreatePromptDto, PromptItem, UpdatePromptDto } from "../types"; import StatePanel from "../components/StatePanel.vue";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"; import { Badge } from "@/components/ui/badge"; import { Button } from "@/components/ui/button"; import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"; import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"; import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"; import { Input } from "@/components/ui/input"; import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationNext, PaginationPrevious } from "@/components/ui/pagination"; import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"; import { Skeleton } from "@/components/ui/skeleton"; import { Spinner } from "@/components/ui/spinner"; import { Switch } from "@/components/ui/switch"; import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"; import { Textarea } from "@/components/ui/textarea"; import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+const difficulties=[{value:"easy",label:"Лёгкий"},{value:"medium",label:"Средний"},{value:"hard",label:"Сложный"}]; const availableTags=["grammar","vocabulary","tense","pronunciation","fluency","conversation"];
+const prompts=ref<PromptItem[]>([]),loading=ref(true),error=ref(false),saving=ref(false),deletingId=ref<string|null>(null),dialogOpen=ref(false),editing=ref<PromptItem|null>(null),deleteCandidate=ref<PromptItem|null>(null); const pagination=reactive({page:1,limit:20,total:0}); const form=reactive({topic:"",textContent:"",audioFileId:"",difficulty:"medium",tags:[] as string[],isActive:true,sortOrder:0}); const topicError=ref(""); const difficultyFilter=ref("all"),activeFilter=ref("all"); const sort=ref<{key:keyof PromptItem;direction:1|-1}>({key:"sortOrder",direction:1});
+const shown=computed(()=>prompts.value.filter(p=>(difficultyFilter.value==="all"||p.difficulty===difficultyFilter.value)&&(activeFilter.value==="all"||p.isActive===(activeFilter.value==="active"))).sort((a,b)=>String(a[sort.value.key]??"").localeCompare(String(b[sort.value.key]??""),"ru",{numeric:true})*sort.value.direction));
+const difficultyLabel=(v:string)=>difficulties.find(i=>i.value===v)?.label||v; function changeSort(key:keyof PromptItem){sort.value={key,direction:sort.value.key===key&&sort.value.direction===1?-1:1};}
+let requestSequence=0;
+async function load(page=pagination.page){
+  const requestId=++requestSequence;
+  loading.value=true;
+  error.value=false;
+  try{
+    const r=await adminApi.getPrompts(page,pagination.limit);
+    if(requestId!==requestSequence)return;
+    prompts.value=r.data;
+    Object.assign(pagination,{page:r.page,limit:r.limit,total:r.total});
+  }catch{
+    if(requestId===requestSequence)error.value=true;
+  }finally{
+    if(requestId===requestSequence)loading.value=false;
+  }
 }
-function openCreate() {
-  editing.value = null;
-  Object.assign(form, { topic: "", textContent: "", audioFileId: "", difficulty: "medium", tags: [], isActive: true, sortOrder: 0 });
-  dialogOpen.value = true;
-}
-function openEdit(prompt: PromptItem) {
-  editing.value = prompt;
-  Object.assign(form, { topic: prompt.topic, textContent: prompt.textContent || "", audioFileId: prompt.audioFileId || "", difficulty: prompt.difficulty, tags: [...prompt.tags], isActive: prompt.isActive, sortOrder: prompt.sortOrder });
-  dialogOpen.value = true;
-}
-async function save() {
-  if (!await formRef.value?.validate().catch(() => false)) return;
-  saving.value = true;
-  const common = { topic: form.topic.trim(), audioFileId: form.audioFileId.trim() || null, difficulty: form.difficulty, tags: form.tags, isActive: form.isActive, sortOrder: form.sortOrder };
-  try {
-    if (editing.value) {
-      const updateData: UpdatePromptDto = { ...common, textContent: form.textContent.trim() };
-      await adminApi.updatePrompt(editing.value.id, updateData);
-    } else {
-      const createData: CreatePromptDto = { ...common, textContent: form.textContent.trim() || undefined };
-      await adminApi.createPrompt(createData);
-    }
-    ElMessage.success(editing.value ? "Промпт обновлён" : "Промпт создан");
-    dialogOpen.value = false; await load();
-  } catch { ElMessage.error("Не удалось сохранить промпт"); }
-  finally { saving.value = false; }
-}
-async function remove(prompt: PromptItem) {
-  try { await ElMessageBox.confirm(`Удалить промпт «${prompt.topic}»? Это действие нельзя отменить.`, "Подтверждение", { confirmButtonText: "Удалить", cancelButtonText: "Отмена", type: "warning" }); }
-  catch { return; }
-  deletingId.value = prompt.id;
-  try { await adminApi.deletePrompt(prompt.id); ElMessage.success("Промпт удалён"); const targetPage = prompts.value.length === 1 && pagination.page > 1 ? pagination.page - 1 : pagination.page; await load(targetPage); }
-  catch { ElMessage.error("Не удалось удалить промпт"); }
-  finally { deletingId.value = null; }
-}
-onMounted(() => load(1));
+function openCreate(){editing.value=null;Object.assign(form,{topic:"",textContent:"",audioFileId:"",difficulty:"medium",tags:[],isActive:true,sortOrder:0});topicError.value="";dialogOpen.value=true;} function openEdit(p:PromptItem){editing.value=p;Object.assign(form,{topic:p.topic,textContent:p.textContent||"",audioFileId:p.audioFileId||"",difficulty:p.difficulty,tags:[...p.tags],isActive:p.isActive,sortOrder:p.sortOrder});topicError.value="";dialogOpen.value=true;}
+async function save(){topicError.value=form.topic.trim()?"":"Введите тему";if(topicError.value)return;saving.value=true;const common={topic:form.topic.trim(),audioFileId:form.audioFileId.trim()||null,difficulty:form.difficulty,tags:form.tags,isActive:form.isActive,sortOrder:Number(form.sortOrder)};try{if(editing.value){const data:UpdatePromptDto={...common,textContent:form.textContent.trim()};await adminApi.updatePrompt(editing.value.id,data);}else{const data:CreatePromptDto={...common,textContent:form.textContent.trim()||undefined};await adminApi.createPrompt(data);}toast.success(editing.value?"Промпт обновлён":"Промпт создан");dialogOpen.value=false;await load();}catch{toast.error("Не удалось сохранить промпт");}finally{saving.value=false;}}
+async function remove(){const p=deleteCandidate.value;if(!p)return;deletingId.value=p.id;try{await adminApi.deletePrompt(p.id);toast.success("Промпт удалён");deleteCandidate.value=null;await load(prompts.value.length===1&&pagination.page>1?pagination.page-1:pagination.page);}catch{toast.error("Не удалось удалить промпт");}finally{deletingId.value=null;}} onMounted(()=>load(1));
 </script>
-<template>
-  <section>
-    <header class="page-header"><div><p class="eyebrow">Контент</p><h1>Промпты</h1><p>Вопросы, сложность и порядок отправки.</p></div><el-button type="primary" @click="openCreate"><IconSymbol name="plus" />Добавить промпт</el-button></header>
-    <StatePanel v-if="error && !loading" title="Не удалось загрузить промпты" retry-label="Повторить" @retry="load()" />
-    <div v-else class="table-card">
-      <el-table v-loading="loading" :data="prompts" row-key="id" stripe table-layout="auto" empty-text="Промптов пока нет">
-        <el-table-column prop="topic" label="Тема" min-width="150"><template #default="{ row }"><strong>{{ row.topic }}</strong></template></el-table-column>
-        <el-table-column prop="textContent" label="Текст" min-width="220" show-overflow-tooltip><template #default="{ row }">{{ row.textContent || '—' }}</template></el-table-column>
-        <el-table-column prop="difficulty" label="Сложность" width="120" :filters="difficultyFilters" :filter-method="filterByDifficulty"><template #default="{ row }"><el-tag :type="difficultyType(row.difficulty)">{{ difficultyLabel(row.difficulty) }}</el-tag></template></el-table-column>
-        <el-table-column label="Теги" min-width="210"><template #default="{ row }"><div class="tag-list"><el-tag v-for="tag in row.tags" :key="tag" type="info" effect="plain">{{ tag }}</el-tag><span v-if="!row.tags.length">—</span></div></template></el-table-column>
-        <el-table-column prop="isActive" label="Статус" width="115" :filters="activeFilters" :filter-method="filterByActive"><template #default="{ row }"><el-tag :type="row.isActive ? 'success' : 'info'">{{ row.isActive ? 'Активен' : 'Неактивен' }}</el-tag></template></el-table-column>
-        <el-table-column prop="timesSent" label="Отправлено" sortable width="125" />
-        <el-table-column prop="sortOrder" label="Порядок" sortable width="110" />
-        <el-table-column label="Действия" fixed="right" width="112"><template #default="{ row }"><div class="table-actions"><el-button circle plain aria-label="Редактировать" @click="openEdit(row)"><IconSymbol name="edit" /></el-button><el-button circle plain type="danger" aria-label="Удалить" :loading="deletingId === row.id" :disabled="deletingId !== null" @click="remove(row)"><IconSymbol v-if="deletingId !== row.id" name="delete" /></el-button></div></template></el-table-column>
-      </el-table>
-      <div v-if="pagination.total > pagination.limit" class="pagination"><el-pagination background layout="prev, pager, next" :current-page="pagination.page" :page-size="pagination.limit" :total="pagination.total" @current-change="load" /></div>
-    </div>
-    <el-dialog v-model="dialogOpen" :title="editing ? 'Редактировать промпт' : 'Новый промпт'" width="min(620px, 94vw)" :close-on-click-modal="!saving" :close-on-press-escape="!saving" :show-close="!saving">
-      <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
-        <el-form-item label="Тема" prop="topic"><el-input v-model="form.topic" placeholder="Например: Travel" /></el-form-item>
-        <el-form-item label="Текст вопроса"><el-input v-model="form.textContent" type="textarea" :rows="3" placeholder="Необязательно" /></el-form-item>
-        <el-form-item label="Telegram Audio File ID"><el-input v-model="form.audioFileId" placeholder="Необязательно" /></el-form-item>
-        <div class="form-grid"><el-form-item label="Сложность"><el-select v-model="form.difficulty"><el-option v-for="item in difficulties" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item><el-form-item label="Порядок"><el-input-number v-model="form.sortOrder" :min="0" /></el-form-item></div>
-        <el-form-item label="Теги"><el-select v-model="form.tags" multiple placeholder="Выберите теги"><el-option v-for="tag in availableTags" :key="tag" :label="tag" :value="tag" /></el-select></el-form-item>
-        <el-form-item label="Активность"><el-switch v-model="form.isActive" inline-prompt active-text="Да" inactive-text="Нет" /></el-form-item>
-      </el-form>
-      <template #footer><el-button :disabled="saving" @click="dialogOpen = false">Отмена</el-button><el-button type="primary" :loading="saving" :disabled="saving" @click="save">Сохранить</el-button></template>
-    </el-dialog>
-  </section>
-</template>
+<template><section class="flex flex-col gap-6"><header class="page-header"><div><p class="eyebrow">Контент</p><h1>Промпты</h1><p>Вопросы, сложность и порядок отправки.</p></div><div class="header-actions"><Select v-model="difficultyFilter"><SelectTrigger aria-label="Фильтр сложности"><SelectValue/></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">Любая сложность</SelectItem><SelectItem v-for="i in difficulties" :key="i.value" :value="i.value">{{i.label}}</SelectItem></SelectGroup></SelectContent></Select><Select v-model="activeFilter"><SelectTrigger aria-label="Фильтр статуса"><SelectValue/></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">Любой статус</SelectItem><SelectItem value="active">Активные</SelectItem><SelectItem value="inactive">Неактивные</SelectItem></SelectGroup></SelectContent></Select><Button @click="openCreate"><Plus data-icon="inline-start"/>Добавить промпт</Button></div></header>
+<StatePanel v-if="error&&!loading" title="Не удалось загрузить промпты" retry-label="Повторить" @retry="load()"/><div v-else class="overflow-hidden rounded-xl border bg-card text-card-foreground"><div class="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Тема</TableHead><TableHead>Текст</TableHead><TableHead>Сложность</TableHead><TableHead>Теги</TableHead><TableHead>Статус</TableHead><TableHead><Button variant="ghost" size="sm" @click="changeSort('timesSent')">Отправлено<ArrowUpDown data-icon="inline-end"/></Button></TableHead><TableHead><Button variant="ghost" size="sm" @click="changeSort('sortOrder')">Порядок<ArrowUpDown data-icon="inline-end"/></Button></TableHead><TableHead>Действия</TableHead></TableRow></TableHeader><TableBody v-if="loading"><TableRow v-for="i in 6" :key="i"><TableCell v-for="j in 8" :key="j"><Skeleton class="h-5 w-full"/></TableCell></TableRow></TableBody><TableBody v-else><TableRow v-for="row in shown" :key="row.id"><TableCell class="font-medium">{{row.topic}}</TableCell><TableCell class="max-w-xs truncate">{{row.textContent||"—"}}</TableCell><TableCell><Badge variant="outline">{{difficultyLabel(row.difficulty)}}</Badge></TableCell><TableCell><div class="flex flex-wrap gap-1"><Badge v-for="tag in row.tags" :key="tag" variant="secondary">{{tag}}</Badge><span v-if="!row.tags.length">—</span></div></TableCell><TableCell><Badge :variant="row.isActive?'default':'secondary'">{{row.isActive?'Активен':'Неактивен'}}</Badge></TableCell><TableCell>{{row.timesSent}}</TableCell><TableCell>{{row.sortOrder}}</TableCell><TableCell><div class="flex gap-1"><Button variant="ghost" size="icon-sm" aria-label="Редактировать" @click="openEdit(row)"><Pencil/></Button><Button variant="ghost" size="icon-sm" aria-label="Удалить" :disabled="deletingId!==null" @click="deleteCandidate=row"><Spinner v-if="deletingId===row.id"/><Trash2 v-else/></Button></div></TableCell></TableRow></TableBody></Table><Empty v-if="!loading&&!shown.length"><EmptyHeader><EmptyMedia variant="icon"><Bot/></EmptyMedia><EmptyTitle>Промптов нет</EmptyTitle><EmptyDescription>Измените фильтры или добавьте первый промпт.</EmptyDescription></EmptyHeader></Empty></div><Pagination v-if="pagination.total>pagination.limit" :page="pagination.page" :total="pagination.total" :items-per-page="pagination.limit" :sibling-count="1" class="border-t p-4" @update:page="load"><PaginationContent v-slot="{items}"><PaginationPrevious/><template v-for="(item,itemIndex) in items" :key="item.type==='page'?item.value:'ellipsis-'+itemIndex"><PaginationItem v-if="item.type==='page'" :value="item.value" :is-active="item.value===pagination.page">{{item.value}}</PaginationItem><PaginationEllipsis v-if="item.type==='ellipsis'" :index="itemIndex"/></template><PaginationNext/></PaginationContent></Pagination></div>
+<Dialog v-model:open="dialogOpen"><DialogContent class="max-h-[90vh] overflow-y-auto sm:max-w-xl" :show-close-button="!saving" @escape-key-down="saving&&$event.preventDefault()" @pointer-down-outside="saving&&$event.preventDefault()"><DialogHeader><DialogTitle>{{editing?'Редактировать промпт':'Новый промпт'}}</DialogTitle><DialogDescription>Настройте содержание, сложность и доступность вопроса.</DialogDescription></DialogHeader><FieldGroup><Field :data-invalid="!!topicError"><FieldLabel for="topic">Тема</FieldLabel><Input id="topic" v-model="form.topic" :aria-invalid="!!topicError" placeholder="Например: Travel"/><FieldError v-if="topicError">{{topicError}}</FieldError></Field><Field><FieldLabel for="text">Текст вопроса</FieldLabel><Textarea id="text" v-model="form.textContent" rows="3" placeholder="Необязательно"/></Field><Field><FieldLabel for="audio">Telegram Audio File ID</FieldLabel><Input id="audio" v-model="form.audioFileId" placeholder="Необязательно"/></Field><FieldGroup class="sm:grid sm:grid-cols-2"><Field><FieldLabel id="difficulty-label">Сложность</FieldLabel><Select v-model="form.difficulty"><SelectTrigger aria-labelledby="difficulty-label"><SelectValue/></SelectTrigger><SelectContent><SelectGroup><SelectItem v-for="i in difficulties" :key="i.value" :value="i.value">{{i.label}}</SelectItem></SelectGroup></SelectContent></Select></Field><Field><FieldLabel for="sort-order">Порядок</FieldLabel><Input id="sort-order" v-model.number="form.sortOrder" type="number" min="0"/></Field></FieldGroup><Field><FieldLabel id="tags-label">Теги</FieldLabel><ToggleGroup aria-labelledby="tags-label" v-model="form.tags" type="multiple" variant="outline" :spacing="2" class="flex-wrap"><ToggleGroupItem v-for="tag in availableTags" :key="tag" :value="tag">{{tag}}</ToggleGroupItem></ToggleGroup></Field><Field orientation="horizontal"><FieldLabel for="active">Активен</FieldLabel><Switch id="active" v-model="form.isActive"/></Field></FieldGroup><DialogFooter><Button variant="outline" :disabled="saving" @click="dialogOpen=false">Отмена</Button><Button :disabled="saving" @click="save"><Spinner v-if="saving" data-icon="inline-start"/>Сохранить</Button></DialogFooter></DialogContent></Dialog>
+<AlertDialog :open="!!deleteCandidate" @update:open="(open)=>{if(!open&&!deletingId)deleteCandidate=null}"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Удалить промпт?</AlertDialogTitle><AlertDialogDescription>Промпт «{{deleteCandidate?.topic}}» будет удалён без возможности восстановления.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel :disabled="!!deletingId">Отмена</AlertDialogCancel><AlertDialogAction variant="destructive" :disabled="!!deletingId" @click.prevent="remove"><Spinner v-if="deletingId" data-icon="inline-start"/>Удалить</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+</section></template>
