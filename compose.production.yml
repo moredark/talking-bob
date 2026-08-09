@@ -1,0 +1,50 @@
+x-logging: &rotated-json-logs
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  db:
+    image: postgres:16.13-alpine3.23@sha256:4e6e670bb069649261c9c18031f0aded7bb249a5b6664ddec29c013a89310d50
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    logging: *rotated-json-logs
+
+  init:
+    image: "${TALKING_BOB_INIT_IMAGE:?Set TALKING_BOB_INIT_IMAGE to an immutable repository reference}@${TALKING_BOB_INIT_DIGEST:?Set TALKING_BOB_INIT_DIGEST to its sha256 digest}"
+    restart: "no"
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    logging: *rotated-json-logs
+
+  app:
+    image: "${TALKING_BOB_RUNTIME_IMAGE:?Set TALKING_BOB_RUNTIME_IMAGE to an immutable repository reference}@${TALKING_BOB_RUNTIME_DIGEST:?Set TALKING_BOB_RUNTIME_DIGEST to its sha256 digest}"
+    restart: unless-stopped
+    stop_grace_period: 11m
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    logging: *rotated-json-logs
+
+volumes:
+  db_data:

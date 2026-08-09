@@ -7,6 +7,7 @@ import {
 import {
   CalendarDayRange,
   getCalendarDayRange,
+  resolveEffectiveTimeZone,
 } from "../../shared/time/timezone";
 
 export { CalendarDayRange, getCalendarDayRange };
@@ -50,6 +51,38 @@ export class RateLimitService {
     });
   }
 
+  async consumeLimit(
+    userId: string,
+    action: string,
+    config?: RateLimitConfig,
+  ): Promise<RateLimitAdmission> {
+    const { maxRequests, windowMinutes } =
+      config ?? DEFAULT_RATE_LIMITS[action] ?? DEFAULT_RATE_LIMITS.command;
+
+    return this.retrySerializable(async (transaction, attemptedAt) => {
+      const windowStart = new Date(
+        attemptedAt.getTime() - windowMinutes * 60 * 1000,
+      );
+      const count = await transaction.userRequest.count({
+        where: {
+          userId,
+          action,
+          createdAt: { gte: windowStart },
+        },
+      });
+
+      if (count >= maxRequests) {
+        return { allowed: false } as const;
+      }
+
+      const request = await transaction.userRequest.create({
+        data: { userId, action, createdAt: attemptedAt },
+      });
+
+      return { allowed: true, requestId: request.id } as const;
+    });
+  }
+
   async checkCalendarDayLimit(
     userId: string,
     action: string,
@@ -71,74 +104,115 @@ export class RateLimitService {
     timeZone: string,
     maxRequests: number,
   ): Promise<RateLimitAdmission> {
-    const maxAttempts = 3;
+    return this.retrySerializable(async (transaction, attemptedAt) => {
+      const lockedUsers = await transaction.$queryRaw<
+        Array<{ timezone: string }>
+      >`SELECT "timezone" FROM "users" WHERE "id" = ${userId} FOR UPDATE`;
+      const timezoneSnapshot = resolveEffectiveTimeZone(
+        lockedUsers[0]?.timezone ?? timeZone,
+      ).timeZone;
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      const attemptedAt = new Date();
-      const { start, end } = getCalendarDayRange(timeZone, attemptedAt);
+      let window = await transaction.quotaWindow.findFirst({
+        where: {
+          userId,
+          action,
+          windowStart: { lte: attemptedAt },
+          windowEnd: { gt: attemptedAt },
+        },
+        orderBy: { windowEnd: "desc" },
+      });
 
-      try {
-        return await this.prisma.$transaction(
-          async (transaction) => {
-            const count = await transaction.userRequest.count({
-              where: {
-                userId,
-                action,
-                createdAt: {
-                  gte: start,
-                  lt: end,
-                },
-              },
-            });
-
-            if (count >= maxRequests) {
-              return { allowed: false } as const;
-            }
-
-            const request = await transaction.userRequest.create({
-              data: { userId, action, createdAt: attemptedAt },
-            });
-
-            return { allowed: true, requestId: request.id } as const;
-          },
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      if (!window) {
+        const { start, end } = getCalendarDayRange(
+          timezoneSnapshot,
+          attemptedAt,
         );
-      } catch (error) {
-        const isWriteConflict =
-          error instanceof Prisma.PrismaClientKnownRequestError &&
-          error.code === "P2034";
-
-        if (!isWriteConflict || attempt === maxAttempts) {
-          throw error;
-        }
+        window = await transaction.quotaWindow.create({
+          data: {
+            userId,
+            action,
+            timezoneSnapshot,
+            windowStart: start,
+            windowEnd: end,
+          },
+        });
       }
-    }
 
-    throw new Error("Failed to consume rate limit");
+      const count = await transaction.userRequest.count({
+        where: { userId, action, quotaWindowId: window.id },
+      });
+
+      if (count >= maxRequests) {
+        return { allowed: false } as const;
+      }
+
+      const request = await transaction.userRequest.create({
+        data: {
+          userId,
+          action,
+          quotaWindowId: window.id,
+          createdAt: attemptedAt,
+        },
+      });
+
+      return { allowed: true, requestId: request.id } as const;
+    });
   }
 
   async releaseAction(requestId: string): Promise<void> {
-    await this.prisma.userRequest.delete({ where: { id: requestId } });
+    await this.retrySerializable(async (transaction) => {
+      const candidate = await transaction.userRequest.findUnique({
+        where: { id: requestId },
+        select: { userId: true },
+      });
+      if (!candidate) return;
+
+      await transaction.$queryRaw`
+        SELECT "id" FROM "users" WHERE "id" = ${candidate.userId} FOR UPDATE
+      `;
+
+      const request = await transaction.userRequest.findUnique({
+        where: { id: requestId },
+        select: { quotaWindowId: true },
+      });
+      if (!request) return;
+
+      await transaction.userRequest.deleteMany({ where: { id: requestId } });
+
+      if (request.quotaWindowId) {
+        await transaction.quotaWindow.deleteMany({
+          where: {
+            id: request.quotaWindowId,
+            userRequests: { none: {} },
+          },
+        });
+      }
+    });
   }
 
   async getCalendarDayActionCount(
     userId: string,
     action: string,
-    timeZone: string,
+    _timeZone: string,
     now: Date = new Date(),
   ): Promise<number> {
-    const { start, end } = getCalendarDayRange(timeZone, now);
-
-    return this.prisma.userRequest.count({
+    const activeWindow = await this.prisma.quotaWindow?.findFirst({
       where: {
         userId,
         action,
-        createdAt: {
-          gte: start,
-          lt: end,
-        },
+        windowStart: { lte: now },
+        windowEnd: { gt: now },
       },
+      orderBy: { windowEnd: "desc" },
     });
+
+    if (activeWindow) {
+      return this.prisma.userRequest.count({
+        where: { userId, action, quotaWindowId: activeWindow.id },
+      });
+    }
+
+    return 0;
   }
 
   async getActionCount(
@@ -157,5 +231,33 @@ export class RateLimitService {
         },
       },
     });
+  }
+
+  private async retrySerializable<T>(
+    operation: (
+      transaction: Prisma.TransactionClient,
+      attemptedAt: Date,
+    ) => Promise<T>,
+  ): Promise<T> {
+    const maxAttempts = 3;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await this.prisma.$transaction(
+          (transaction) => operation(transaction, new Date()),
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+      } catch (error) {
+        const isRetryableConflict =
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          (error.code === "P2034" || error.code === "P2002");
+
+        if (!isRetryableConflict || attempt === maxAttempts) {
+          throw error;
+        }
+      }
+    }
+
+    throw new Error("Failed to consume rate limit");
   }
 }

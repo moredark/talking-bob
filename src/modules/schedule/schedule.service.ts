@@ -22,6 +22,9 @@ const DEFAULT_PROMPT_MINUTE = 0;
 const DEFAULT_BATCH_SIZE = 100;
 const MAX_BATCH_SIZE = 100;
 const CLAIM_LEASE_MS = 2 * 60 * 1000;
+export const PROMPT_REPEAT_WINDOW = 5;
+
+type DeliverablePrompt = Pick<Prompt, "id" | "topic" | "audioFileId">;
 
 interface RepairRow {
   id: string;
@@ -52,6 +55,16 @@ interface ReclaimRow {
   promptId: string;
   topic: string;
   audioFileId: string | null;
+}
+
+interface PromptHistoryRow {
+  userId: string;
+  promptId: string;
+}
+
+interface ManualUserRow {
+  id: string;
+  telegramId: bigint;
 }
 
 export interface ScheduleSettings {
@@ -321,6 +334,7 @@ export class ScheduleService implements OnModuleInit {
 
       const prompts = await tx.prompt.findMany({
         where: { isActive: true },
+        orderBy: { id: "asc" },
         select: {
           id: true,
           topic: true,
@@ -343,6 +357,10 @@ export class ScheduleService implements OnModuleInit {
         FOR UPDATE SKIP LOCKED
         LIMIT ${remaining}
       `);
+      const histories = await this.loadRecentPromptHistories(
+        tx,
+        dueUsers.map((user) => user.id),
+      );
 
       for (const user of dueUsers) {
         const hour = this.validHour(user.dailyPromptHour)
@@ -365,7 +383,11 @@ export class ScheduleService implements OnModuleInit {
           timezone,
         ).instant;
         const occurrenceKey = `scheduled:${user.id}:${occurrence.localDate}`;
-        const prompt = prompts[Math.floor(Math.random() * prompts.length)];
+        const prompt = this.selectPrompt(
+          prompts,
+          histories.get(user.id) ?? [],
+        );
+        if (!prompt) continue;
         const claimToken = randomUUID();
         const claimExpiresAt = new Date(now.getTime() + CLAIM_LEASE_MS);
 
@@ -433,32 +455,49 @@ export class ScheduleService implements OnModuleInit {
 
   async createManualClaim(
     user: Pick<User, "id" | "telegramId">,
-    prompt: Pick<Prompt, "id" | "topic" | "audioFileId">,
     now = new Date(),
-  ): Promise<DeliveryClaim> {
-    const claimToken = randomUUID();
-    const record = await this.prisma.userPrompt.create({
-      data: {
-        userId: user.id,
-        promptId: prompt.id,
-        source: UserPromptSource.manual,
-        deliveryStatus: UserPromptDeliveryStatus.pending,
-        claimToken,
-        claimExpiresAt: new Date(now.getTime() + CLAIM_LEASE_MS),
-      },
-      select: { id: true },
-    });
+  ): Promise<DeliveryClaim | null> {
+    return this.prisma.$transaction(async (tx) => {
+      const [lockedUser] = await tx.$queryRaw<ManualUserRow[]>(Prisma.sql`
+        SELECT "id", "telegramId"
+        FROM "users"
+        WHERE "id" = ${user.id}
+        FOR UPDATE
+      `);
+      if (!lockedUser) return null;
 
-    return {
-      userPromptId: record.id,
-      claimToken,
-      user: { id: user.id, telegramId: user.telegramId },
-      prompt: {
-        id: prompt.id,
-        topic: prompt.topic,
-        audioFileId: prompt.audioFileId,
-      },
-    };
+      const prompts = await tx.prompt.findMany({
+        where: { isActive: true },
+        orderBy: { id: "asc" },
+        select: { id: true, topic: true, audioFileId: true },
+      });
+      const histories = await this.loadRecentPromptHistories(tx, [user.id]);
+      const prompt = this.selectPrompt(prompts, histories.get(user.id) ?? []);
+      if (!prompt) return null;
+
+      const claimToken = randomUUID();
+      const record = await tx.userPrompt.create({
+        data: {
+          userId: lockedUser.id,
+          promptId: prompt.id,
+          source: UserPromptSource.manual,
+          deliveryStatus: UserPromptDeliveryStatus.pending,
+          claimToken,
+          claimExpiresAt: new Date(now.getTime() + CLAIM_LEASE_MS),
+        },
+        select: { id: true },
+      });
+
+      return {
+        userPromptId: record.id,
+        claimToken,
+        user: {
+          id: lockedUser.id,
+          telegramId: lockedUser.telegramId,
+        },
+        prompt,
+      };
+    });
   }
 
   async beginDeliveryAttempt(
@@ -614,6 +653,64 @@ export class ScheduleService implements OnModuleInit {
     }
 
     return claims;
+  }
+
+  private async loadRecentPromptHistories(
+    tx: Prisma.TransactionClient,
+    userIds: string[],
+  ): Promise<Map<string, string[]>> {
+    const histories = new Map<string, string[]>();
+    if (userIds.length === 0) return histories;
+
+    const rows = await tx.$queryRaw<PromptHistoryRow[]>(Prisma.sql`
+      SELECT recent."userId", recent."promptId"
+      FROM (
+        SELECT
+          up."userId",
+          up."promptId",
+          ROW_NUMBER() OVER (
+            PARTITION BY up."userId"
+            ORDER BY up."createdAt" DESC, up."id" DESC
+          ) AS position
+        FROM "user_prompts" up
+        JOIN "prompts" p ON p."id" = up."promptId"
+        WHERE up."userId" IN (${Prisma.join(userIds)})
+          AND up."deliveryStatus" IN (
+            'pending'::"UserPromptDeliveryStatus",
+            'sent'::"UserPromptDeliveryStatus"
+          )
+          AND p."isActive" = true
+      ) recent
+      WHERE recent.position <= ${PROMPT_REPEAT_WINDOW}
+      ORDER BY recent."userId", recent.position
+    `);
+
+    for (const row of rows) {
+      const promptIds = histories.get(row.userId) ?? [];
+      promptIds.push(row.promptId);
+      histories.set(row.userId, promptIds);
+    }
+    return histories;
+  }
+
+  private selectPrompt(
+    prompts: DeliverablePrompt[],
+    recentPromptIds: string[],
+  ): DeliverablePrompt | null {
+    if (prompts.length === 0) return null;
+    if (prompts.length === 1) return prompts[0];
+
+    const effectiveWindow = Math.min(
+      PROMPT_REPEAT_WINDOW,
+      prompts.length - 1,
+    );
+    const excludedIds = new Set(recentPromptIds.slice(0, effectiveWindow));
+    const eligible = prompts.filter((prompt) => !excludedIds.has(prompt.id));
+
+    // Small catalogs intentionally choose a stable candidate. Since the
+    // effective window is at most catalog size - 1, eligible is never empty.
+    if (prompts.length <= PROMPT_REPEAT_WINDOW) return eligible[0];
+    return eligible[Math.floor(Math.random() * eligible.length)];
   }
 
   private normalizeBatchSize(limit: number): number {

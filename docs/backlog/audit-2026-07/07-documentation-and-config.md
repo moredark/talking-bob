@@ -1,7 +1,7 @@
 # Синхронизация документации и runtime-конфигурации
 
 - Priority: `P1`
-- Status: `todo`
+- Status: `done`
 - Scope: product docs, data docs, env contract
 - Admin: out of scope
 - Depends on: целевые решения из `01`–`05`, но не их полная реализация

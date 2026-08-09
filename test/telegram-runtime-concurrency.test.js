@@ -154,6 +154,7 @@ function callbackContext(chatId, updateId, data = "report") {
 
 function createBareService({
   startHandle,
+  startNewQuestionHandle,
   voiceHandle,
   reportHandle,
   settingsHandle,
@@ -162,7 +163,10 @@ function createBareService({
   aiRequestLimiter,
 } = {}) {
   return new TelegramService(
-    { handle: startHandle || (async () => undefined) },
+    {
+      handle: startHandle || (async () => undefined),
+      handleNewQuestion: startNewQuestionHandle || (async () => undefined),
+    },
     { handle: voiceHandle || (async () => undefined) },
     { handle: reportHandle || (async () => undefined) },
     {
@@ -278,6 +282,30 @@ test("registered command, event, and callback handlers return business promises"
   await Promise.all(promises);
 });
 
+test("new question callback returns the dedicated handler promise", async () => {
+  const gate = deferred();
+  const calls = [];
+  const { fakeBot } = createService({
+    startHandle: async () => calls.push("start"),
+    startNewQuestionHandle: async () => {
+      calls.push("new-question:start");
+      await gate.promise;
+      calls.push("new-question:end");
+    },
+  });
+
+  const handling = fakeBot.callbacks
+    .find(({ pattern }) => pattern === "new_question")
+    .handler({});
+  assert.equal(typeof handling.then, "function");
+  await tick();
+  assert.deepEqual(calls, ["new-question:start"]);
+
+  gate.resolve();
+  await handling;
+  assert.deepEqual(calls, ["new-question:start", "new-question:end"]);
+});
+
 test("TelegramService caps the real runner initial poll at configured concurrency", async () => {
   const requests = [];
   const { fakeBot, service } = createService({ telegramUpdates: 3 });
@@ -303,6 +331,56 @@ test("TelegramService caps the real runner initial poll at configured concurrenc
   assert.equal(requests[0].limit, 3);
   assert.equal(requests[1].limit, 3);
   await service.onModuleDestroy();
+});
+
+test("Telegram lifecycle follows startup, restart wait, and shutdown transitions", async () => {
+  const initGate = deferred();
+  const requests = [];
+  const { fakeBot, service } = createService({ telegramUpdates: 2 });
+  fakeBot.api = {
+    setMyCommands: async () => undefined,
+    getUpdates: async (args, signal) => {
+      requests.push(args);
+      return new Promise((resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      });
+    },
+  };
+  fakeBot.init = () => initGate.promise;
+  fakeBot.handleUpdate = async () => undefined;
+  fakeBot.errorHandler = async () => undefined;
+
+  assert.equal(service.getLifecycleState(), "starting");
+  service.startRunner();
+  await tick();
+  assert.equal(service.getLifecycleState(), "starting");
+
+  initGate.resolve();
+  await waitFor(
+    () => service.getLifecycleState() === "running" && requests.length > 0,
+    "the Telegram runner to enter running state",
+  );
+  assert.equal(requests[0].limit, 2);
+
+  const shutdown = service.onModuleDestroy();
+  assert.equal(service.getLifecycleState(), "shutting_down");
+  await shutdown;
+  assert.equal(service.getLifecycleState(), "stopped");
+
+  const failed = createBareService();
+  failed.getBot().api.setMyCommands = async () => {
+    throw new Error("Telegram startup failed: bot-token-must-not-leak");
+  };
+  failed.startRunner();
+  await waitFor(
+    () => failed.getLifecycleState() === "restart_wait",
+    "the first failed startup to schedule a restart",
+  );
+  assert.notEqual(failed.botStartRetryTimer, undefined);
+  await failed.onModuleDestroy();
+  assert.equal(failed.getLifecycleState(), "stopped");
 });
 
 test("TelegramService drains all middleware accepted by the real runner before shutdown", async () => {

@@ -6,12 +6,14 @@ import { TelegramModule } from "./modules/telegram";
 import { AuthModule } from "./modules/auth";
 import { AdminModule } from "./modules/admin";
 import { ErrorLogModule } from "./modules/error-log";
+import { HealthModule } from "./modules/health";
 
 @Module({
   imports: [
     DatabaseModule,
     ErrorLogModule,
     TelegramModule,
+    HealthModule,
     AuthModule,
     AdminModule,
   ],

@@ -31,20 +31,19 @@ export class RateLimitGuard implements CanActivate {
       return true;
     }
 
-    const isAllowed = await this.rateLimitService.checkLimit(
+    const admission = await this.rateLimitService.consumeLimit(
       userId,
       options.action,
       options.config
     );
 
-    if (!isAllowed) {
+    if (!admission.allowed) {
       throw new HttpException(
         "Rate limit exceeded",
         HttpStatus.TOO_MANY_REQUESTS
       );
     }
 
-    await this.rateLimitService.recordAction(userId, options.action);
     return true;
   }
 

@@ -1,7 +1,7 @@
 # Жизненный цикл отчёта и безопасный Telegram output
 
 - Priority: `P0`
-- Status: `in-progress`
+- Status: `done`
 - Scope: conversation, report generation, Telegram formatting
 - Admin: out of scope
 - Depends on: `01`
@@ -100,3 +100,42 @@
   без LLM/Telegram вызовов из migration.
 - Кнопка `new_question` прикрепляется к последнему report chunk, чтобы delivery
   отчёта не зависела от отдельного завершающего Telegram message.
+
+## Фактическая реализация
+
+- `UserPrompt` хранит persisted `open/closed` conversation state, а
+  `ConversationMessage.telegramUpdateId` дедуплицирует повторные updates.
+- Третий voice message, закрытие разговора и generation claim выполняются в
+  одной короткой transaction под `UserPrompt FOR UPDATE`. Четвёртый voice
+  отклоняется до download/Whisper; delayed assistant follow-up вставляется
+  только если разговор всё ещё открыт и user turn остаётся последним.
+- Manual и automatic report используют единый fenced lifecycle в
+  `ResponseService`: active lease не дублирует LLM, failed/expired claim можно
+  reclaim только новым request key, generated result никогда не генерируется
+  повторно.
+- Generation completion атомарно сохраняет versioned payload и создаёт первую
+  persisted delivery request. Каждый intentional resend имеет отдельный
+  request key, chunks, cursor, lease и sanitized outcome.
+- Telegram send выполняется после persisted attempt marker. `GrammyError`
+  сохраняется как definite failure; `HttpError`, unknown transport и ошибка
+  durable completion после успешного send остаются terminal ambiguous и не
+  ретраятся автоматически.
+- Output отправляется plain text без `parse_mode`, делится по semantic
+  boundaries максимум на 4096 UTF-16 code units и не разрывает surrogate pair.
+  Кнопка нового вопроса прикреплена только к последнему chunk.
+- `model/fallback/legacy` provenance сохраняется и восстанавливается при resend;
+  fallback явно обозначается пользователю как базовый автоматический отчёт.
+
+## Фактические проверки
+
+- `npm test` — успешно, 124/124.
+- `npx prisma validate` и `npx prisma generate` — успешно.
+- `git diff --check` — успешно.
+- Добавлены tests lifecycle claims/fencing/rollback, third/fourth voice,
+  duplicate update, manual/auto ownership, generation → delivery failure →
+  intentional resend, plain-text special characters, 4096 boundary, surrogate
+  safety, fallback provenance и post-send persistence ambiguity.
+- Final reviewer: blocking findings отсутствуют.
+- Live PostgreSQL migration и реальное contention между отдельными DB
+  connections не запускались: PostgreSQL/Docker недоступны в окружении.
+- Commit/PR: не создавались.

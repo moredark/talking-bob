@@ -1,6 +1,6 @@
 # Статус выполнения backlog
 
-Обновлено: 2026-08-07
+Обновлено: 2026-08-08
 
 Этот файл — точка продолжения долгой работы. Перед началом и после завершения
 каждой задачи обновляются таблица, текущий фокус и журнал проверок. Подробные
@@ -12,18 +12,18 @@ acceptance criteria остаются в task-файлах.
 |---|---|---|---|
 | 01 Runtime Telegram-бота | `done` | Official runner, finite AI backlog и bounded lifecycle; повторный review закрыт | `npm test`: 84/84; Prisma valid |
 | 02 Расписание и доставка | `done` | Все acceptance criteria реализованы; live PostgreSQL validation отмечена отдельно | `npm test`: 77/77; Prisma valid |
-| 03 Report lifecycle/output | `in-progress` | Discovery/plan готовы; production implementation — следующая точка продолжения | Prisma valid |
-| 04 Privacy/observability/integrity | `todo` | Read-only аудит: foundations частично есть, основные AC не закрыты | 2026-08-07 audit |
-| 05 Prompts/TTS contract | `todo` | TTS boundary частично закрыта; anti-repeat/onboarding не реализованы | 2026-08-07 audit |
-| 06 Регрессионное покрытие | `in-progress` | Сильное покрытие 01/02; отсутствуют journey/report/04/05/PG integration | 2026-08-07 audit |
-| 07 Документация/config | `todo` | README/env частично актуальны; app/database/time contract устарели | 2026-08-07 audit |
-| 08 Backend operations | `todo` | Почти все AC не закрыты; есть только часть locking/network foundations | 2026-08-07 audit |
+| 03 Report lifecycle/output | `done` | Все acceptance criteria реализованы; live PostgreSQL validation отмечена отдельно | `npm test`: 124/124; Prisma valid |
+| 04 Privacy/observability/integrity | `done` | Sanitized correlated errors, atomic quota windows и 30-day retention реализованы | `npm test`: 142/142; Prisma valid |
+| 05 Prompts/TTS contract | `done` | Atomic N=5 anti-repeat, deterministic fallback, onboarding split и TTS boundary реализованы | `npm test`: 150/150; Prisma valid |
+| 06 Регрессионное покрытие | `done` | Полный in-memory journey, offline CI gate и isolated real PostgreSQL invariants реализованы | `test:ci`: 154/154; PG: 7/7 |
+| 07 Документация/config | `done` | README, runtime/env и DB/migration contracts сверены с реализацией | `test:ci`: 154/154; PG: 7/7; Compose valid |
+| 08 Backend operations | `done` | Health/readiness, minimal images, immutable production Compose, recovery и operations gates реализованы | `test:ci`: 163/163; operations gate green |
 
 ## Текущий фокус
 
-Task `01` завершена после повторного архитектурного аудита и hardening.
-Следующая точка — production implementation task `03`; работа остановлена после
-текущего пункта по просьбе пользователя.
+Все задачи `01`–`08` завершены. Текущий backlog не содержит активного пункта;
+оставшиеся staging/security hardening notes перечислены ниже как отдельные
+операционные продолжения, а не незакрытые acceptance criteria.
 
 ## Принятые рабочие решения
 
@@ -91,9 +91,67 @@ Task `01` завершена после повторного архитекту�
   production advisories (1 low, 3 moderate, 9 high). Lock-tree не связывает их
   с двумя добавленными dependencies; автоматическое обновление зависимостей не
   выполнялось и требует отдельной security/dependency задачи.
+- 2026-08-08 — task 03 завершена: добавлены conversation closure и update
+  dedupe, fenced generation/delivery claims, persisted resend requests,
+  versioned model/fallback/legacy payload, plain-text semantic chunking и
+  honest fallback UI. `npm test` успешно, 124/124; `npx prisma validate`,
+  `npx prisma generate` и `git diff --check` успешно; финальный review без
+  blocking findings. Live PostgreSQL migration/concurrency validation не
+  запускалась из-за отсутствия PostgreSQL/Docker в окружении.
+- 2026-08-08 — task 04 завершена: добавлены allowlist-only structured errors,
+  correlation context для Telegram/scheduler/provider flows, atomic user upsert
+  и rolling/calendar admissions, immutable quota windows с timezone snapshot,
+  query/cleanup индексы и конфигурируемая 30-дневная retention-политика.
+  Review-поправки защитили активное 25-часовое DST-окно от cleanup, разделили
+  delivery correlation contexts и исправили provider attribution. `npm test`
+  успешно, 142/142; `npx prisma validate`, generate/build и `git diff --check`
+  успешно. Live PostgreSQL migration/backfill/locking/SSI/upsert concurrency не
+  проверялись из-за отсутствия PostgreSQL/Docker.
+- 2026-08-08 — task 05 завершена: выбор manual/scheduled prompt объединён в
+  транзакционный N=5 anti-repeat с pending reservations и одним batched history
+  query; добавлены детерминированный small-catalog fallback, отдельный
+  new-question flow без onboarding и документация metadata/TTS boundary.
+  `npm test` успешно, 150/150; `npx prisma validate`, generate/build и
+  `git diff --check` успешно. Live PostgreSQL locks/migration/query plan остаются
+  частью integration/operations gate.
+- 2026-08-08 — task 06 завершена: добавлен полный real-class in-memory journey,
+  `test:ci` и изолированный ephemeral PostgreSQL 16 gate с fresh migrations,
+  session timezone, quota, prompt/report locks/fencing и `SKIP LOCKED`.
+  Реальный concurrency run обнаружил P2002 race у Prisma upsert; добавлен
+  winner fallback и unit/PG regressions. `test:ci` успешно, 154/154;
+  `test:postgres` успешно, 7/7; финальный review без blockers.
+- 2026-08-08 — ранняя версия PostgreSQL test была подобрана default discovery
+  по суффиксу `.test.js` и записала test fixtures в dev DB. Файл переименован в
+  explicit-only `.integration.js`; адресно удалены 14 test users, 8 test
+  prompts и 4 relations, повторная read-only проверка показала 0 остатков.
+- 2026-08-08 — task 07 завершена: README разделяет Compose и host PostgreSQL
+  setup, `docs/app.md` фиксирует фактические conversation/delivery/time/quota/
+  retention contracts, `.env.example` содержит 31 уникальный ключ с code
+  defaults/ranges, а `docs/database.md` описывает 9 bot/backend моделей и
+  SQL-only constraints/triggers/backfills. Reviewer findings по welcome,
+  anti-repeat window, persisted voice id, ambiguous delivery и retention rows
+  исправлены. `test:ci` успешно, 154/154; fresh PostgreSQL 16 gate успешно,
+  7/7 и все 13 миграций; `docker compose config --quiet`, env/link inventory,
+  Prisma validation и `git diff --check` успешно. `DEPLOYMENT_PLAN.md` не
+  изменялся. Остаток: Prisma считает `Prompt.tags` required, исторический SQL
+  не добавил `NOT NULL`; это явно отражено в database contract.
+- 2026-08-08 — task 08 завершена: добавлены раздельные liveness/readiness с
+  актуальным Telegram lifecycle, multi-stage non-root runtime/init images на
+  зафиксированном Node 24.18.0, immutable production Compose без host ports,
+  log rotation и backend operations runbook. Recovery gate применяет все 13
+  миграций, проверяет 7 реальных PostgreSQL invariants, custom-format
+  backup/restore и legacy backfill при разных DB session timezones; container
+  gate проверяет отсутствие build tools, рабочие Prisma/bcrypt/init CLI и
+  одинаковый scheduling result при `TZ=UTC`/`Asia/Tokyo`. Review исправил
+  readiness race, fail-open backup/restore примеры, rollback init-image risk и
+  monitoring SQL. `test:ci` успешно, 163/163; `test:operations`, обе Compose
+  config-проверки, env/link inventory и `git diff --check` успешно;
+  временных Docker-ресурсов не осталось. `DEPLOYMENT_PLAN.md` не изменялся.
 
 ## Следующая точка продолжения
 
-Вернуться к task `03` и реализовать согласованные report state machine,
-persisted resend и plain-text chunking schema/migration. Перед финализацией
-backlog отдельно разобрать production dependency advisories без `audit fix`.
+Backlog закрыт. Перед production rollout выполнить внешний staging smoke
+выделенным Telegram bot/test user, проверить опубликованный init image на
+throwaway DB и по возможности заменить blanket `env_file` явным allowlist.
+Production dependency advisories разобрать отдельной security/dependency
+задачей без автоматического `audit fix`.

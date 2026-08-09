@@ -1,7 +1,8 @@
-import { Injectable, Inject, Logger } from "@nestjs/common";
+import { Injectable, Inject, Logger, Optional } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { ScheduleService } from "./schedule.service";
 import { MESSAGE_DISPATCHER, IMessageDispatcher } from "./message-dispatcher.interface";
+import { ErrorLogService, ObservabilityContextService } from "../error-log";
 
 /**
  * Cron-based scheduler service.
@@ -22,6 +23,8 @@ export class SchedulerService {
     private readonly scheduleService: ScheduleService,
     @Inject(MESSAGE_DISPATCHER)
     private readonly messageDispatcher: IMessageDispatcher,
+    @Optional() private readonly errorLog?: ErrorLogService,
+    @Optional() private readonly observability?: ObservabilityContextService,
   ) {}
 
   /**
@@ -30,6 +33,14 @@ export class SchedulerService {
    */
   @Cron(CronExpression.EVERY_MINUTE)
   async processScheduledMessages(): Promise<void> {
+    if (!this.observability) return this.processScheduledMessagesCorrelated();
+    return this.observability.run(
+      { correlationId: this.observability.createCorrelationId("schedule") },
+      () => this.processScheduledMessagesCorrelated(),
+    );
+  }
+
+  private async processScheduledMessagesCorrelated(): Promise<void> {
     // Prevent overlapping executions within the same instance
     if (this.isProcessing) {
       this.logger.debug("Previous tick still processing, skipping");
@@ -59,8 +70,17 @@ export class SchedulerService {
           }
         } catch (error) {
           this.logger.error(
-            `Error processing user prompt ${claim.userPromptId}`,
+            "Error processing scheduled delivery claim",
           );
+          await this.errorLog?.capture({
+            type: "system",
+            service: "scheduler",
+            operation: "claim.dispatch",
+            userId: claim.user.id,
+            requestId: claim.userPromptId,
+            error,
+            retryable: true,
+          });
           // Continue with other users even if one fails
         }
       }
@@ -69,9 +89,20 @@ export class SchedulerService {
         this.logger.log(`Successfully sent ${successCount} scheduled messages`);
       }
     } catch (error) {
-      this.logger.error(`Scheduler tick error: ${error}`);
+      this.logger.error(`Scheduler tick failed (${this.errorKind(error)})`);
+      await this.errorLog?.capture({
+        type: "system",
+        service: "scheduler",
+        operation: "tick",
+        error,
+        retryable: true,
+      });
     } finally {
       this.isProcessing = false;
     }
+  }
+
+  private errorKind(error: unknown): string {
+    return error instanceof Error ? error.name : "UnknownError";
   }
 }

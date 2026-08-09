@@ -56,21 +56,41 @@ export class UserService {
     telegramId: bigint,
     username?: string
   ): Promise<User> {
-    const existingUser = await this.findByTelegramId(telegramId);
-
-    if (existingUser) {
-      return existingUser;
-    }
+    const now = new Date();
 
     try {
-      return await this.createUser({ telegramId, username });
+      return await this.prisma.user.upsert({
+        where: { telegramId },
+        update: {},
+        create: {
+          telegramId,
+          username,
+          dailyPromptEnabled: true,
+          dailyPromptHour: 13,
+          dailyPromptMinute: 0,
+          timezone: DEFAULT_USER_TIMEZONE,
+          nextPromptAt: nextSlotAtOrAfter(
+            now,
+            13,
+            0,
+            DEFAULT_USER_TIMEZONE,
+          ).instant,
+        },
+      });
     } catch (error) {
       if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002"
+        !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+        error.code !== "P2002"
       ) {
-        const winner = await this.findByTelegramId(telegramId);
-        if (winner) return winner;
+        throw error;
+      }
+
+      const existingUser = await this.prisma.user.findUnique({
+        where: { telegramId },
+      });
+
+      if (existingUser) {
+        return existingUser;
       }
 
       throw error;

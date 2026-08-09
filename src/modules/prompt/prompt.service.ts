@@ -6,21 +6,13 @@ import { PrismaService } from "../../infrastructure/database";
 export class PromptService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getActivePrompts(): Promise<Prompt[]> {
-    return this.prisma.prompt.findMany({
+  async hasActivePrompt(): Promise<boolean> {
+    const prompt = await this.prisma.prompt.findFirst({
       where: { isActive: true },
+      select: { id: true },
     });
-  }
 
-  async getRandomActivePrompt(): Promise<Prompt | null> {
-    const prompts = await this.getActivePrompts();
-
-    if (prompts.length === 0) {
-      return null;
-    }
-
-    const randomIndex = Math.floor(Math.random() * prompts.length);
-    return prompts[randomIndex];
+    return prompt !== null;
   }
 
   async getPromptById(id: string): Promise<Prompt | null> {

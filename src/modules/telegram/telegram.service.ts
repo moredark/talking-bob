@@ -22,6 +22,7 @@ import {
   AiRequestLimiterService,
 } from "../ai";
 import { DailyPromptDispatcher } from "../schedule";
+import { ErrorLogService, ObservabilityContextService } from "../error-log";
 import { ReportHandler } from "./handlers/report.handler";
 import { SettingsHandler } from "./handlers/settings.handler";
 import { StartHandler } from "./handlers/start.handler";
@@ -35,6 +36,13 @@ class TelegramRuntimeClosedError extends Error {
 }
 
 type TelegramUpdate = Parameters<Bot["handleUpdate"]>[0];
+
+export type TelegramLifecycleState =
+  | "starting"
+  | "running"
+  | "restart_wait"
+  | "shutting_down"
+  | "stopped";
 
 @Injectable()
 export class TelegramService implements OnModuleInit, OnModuleDestroy {
@@ -51,6 +59,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   private shuttingDown = false;
   private telegramApiClosed = false;
   private shutdownDeadline?: number;
+  private lifecycleState: TelegramLifecycleState = "starting";
 
   constructor(
     private readonly startHandler: StartHandler,
@@ -60,6 +69,8 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     private readonly dailyPromptDispatcher: DailyPromptDispatcher,
     @Inject(RUNTIME_CONFIG) private readonly runtimeConfig: RuntimeConfig,
     @Optional() private readonly aiRequestLimiter?: AiRequestLimiterService,
+    private readonly errorLog?: ErrorLogService,
+    private readonly observability?: ObservabilityContextService,
   ) {
     this.bot = new Bot(runtimeConfig.telegramBotToken, {
       client: {
@@ -84,6 +95,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   async onModuleDestroy(): Promise<void> {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
+    this.lifecycleState = "shutting_down";
     const deadline = Date.now() + this.runtimeConfig.shutdown.drainTimeoutMs;
     this.shutdownDeadline = deadline;
     this.aiRequestLimiter?.close();
@@ -107,10 +119,15 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         `Runtime drain timed out with ${this.runner?.size() ?? 0} Telegram updates, ${this.telegramBusinessTasks.size} Telegram business tasks, ${this.callbackAcknowledgements.size} callback acknowledgements, ${this.aiRequestLimiter?.active ?? 0} active AI requests, and ${this.aiRequestLimiter?.pending ?? 0} pending AI requests`,
       );
     }
+    this.lifecycleState = "stopped";
   }
 
   getBot(): Bot {
     return this.bot;
+  }
+
+  getLifecycleState(): TelegramLifecycleState {
+    return this.lifecycleState;
   }
 
   private registerHandlers(): void {
@@ -133,7 +150,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
     this.bot.callbackQuery("report", (ctx) => this.reportHandler.handle(ctx));
     this.bot.callbackQuery("new_question", (ctx) =>
-      this.startHandler.handle(ctx),
+      this.startHandler.handleNewQuestion(ctx),
     );
     this.bot.callbackQuery("toggle_daily", (ctx) =>
       this.settingsHandler.handleToggle(ctx),
@@ -149,6 +166,13 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       this.logger.error(
         `Telegram middleware failed (${this.errorKind(error.error)})`,
       );
+      void this.errorLog?.capture({
+        type: "telegram",
+        service: "telegram",
+        operation: "update.handle",
+        error: error.error,
+        retryable: false,
+      });
     });
   }
 
@@ -157,7 +181,20 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     next: () => void | Promise<void>,
   ): Promise<void> {
     if (this.shuttingDown) return Promise.resolve();
-    const downstream = Promise.resolve(next());
+    const correlationId = this.observability?.createCorrelationId("tg") ??
+      `tg-update-${ctx.update.update_id}`;
+    const downstream = Promise.resolve(
+      this.observability
+        ? this.observability.run(
+            {
+              correlationId,
+              telegramUpdateId: String(ctx.update.update_id),
+              requestId: `update:${ctx.update.update_id}`,
+            },
+            next,
+          )
+        : next(),
+    );
     let tracked!: Promise<void>;
     tracked = downstream.finally(() => {
       this.telegramBusinessTasks.delete(tracked);
@@ -174,6 +211,14 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(
           `Telegram callback acknowledgement failed for update ${ctx.update.update_id} (${this.errorKind(error)})`,
         );
+        void this.errorLog?.capture({
+          type: "telegram",
+          service: "telegram",
+          operation: "callback.acknowledge",
+          telegramUpdateId: ctx.update.update_id,
+          error,
+          retryable: true,
+        });
       })
       .finally(() => {
         this.callbackAcknowledgements.delete(acknowledgement);
@@ -192,6 +237,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     }
 
     this.logger.log("Starting Telegram bot...");
+    this.lifecycleState = "starting";
     const startupPromise = this.launchRunner();
     this.startupPromise = startupPromise;
     void startupPromise
@@ -199,6 +245,13 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(
           `Telegram runner failed to start (${this.errorKind(error)})`,
         );
+        void this.errorLog?.capture({
+          type: "telegram",
+          service: "telegram",
+          operation: "runner.start",
+          error,
+          retryable: true,
+        });
         this.scheduleRunnerRestart();
       })
       .finally(() => {
@@ -216,21 +269,14 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     ]);
     if (this.shuttingDown) return;
 
+    await this.bot.init();
+    if (this.shuttingDown) return;
+
     const concurrency = this.runtimeConfig.concurrency.telegramUpdates;
     const fetchUpdates = createUpdateFetcher(this.bot, {
       fetch: { allowed_updates: ["message", "callback_query"] },
     });
-    const supplier = {
-      supply: async (
-        batchSize: number,
-        signal: Parameters<typeof fetchUpdates>[1],
-      ) => {
-        await this.bot.init();
-        supplier.supply = fetchUpdates;
-        return fetchUpdates(batchSize, signal);
-      },
-    };
-    const source = createSource<TelegramUpdate>(supplier);
+    const source = createSource<TelegramUpdate>({ supply: fetchUpdates });
     // runner@2.0.3 starts a source at Infinity. Set the initial pace before
     // start so even the first Telegram batch respects the hard admission cap.
     source.setGeneratorPace(concurrency);
@@ -244,6 +290,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     const runner = createRunner(source, sink);
     runner.start();
     this.runner = runner;
+    this.lifecycleState = "running";
     this.logger.log("Telegram bot started");
 
     const task = runner.task();
@@ -254,6 +301,13 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(
           `Telegram runner stopped (${this.errorKind(error)})`,
         );
+        void this.errorLog?.capture({
+          type: "telegram",
+          service: "telegram",
+          operation: "runner.run",
+          error,
+          retryable: true,
+        });
       })
       .finally(() => {
         if (this.runner === runner) this.runner = undefined;
@@ -272,6 +326,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (this.restartAttempted) {
+      this.lifecycleState = "stopped";
       this.logger.error(
         "Telegram runner exhausted its restart budget; requesting shutdown",
       );
@@ -280,6 +335,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     }
 
     this.restartAttempted = true;
+    this.lifecycleState = "restart_wait";
     this.logger.warn(
       `Restarting Telegram runner in ${this.botStartRetryMs / 1000}s`,
     );

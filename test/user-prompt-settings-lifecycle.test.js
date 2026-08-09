@@ -52,31 +52,97 @@ test("new user persists an enabled default schedule with its initial slot atomic
   }
 });
 
-test("findOrCreate returns the winning user after a Prisma P2002 race", async () => {
-  const winner = {
-    id: "winner",
-    telegramId: 123n,
-    timezone: DEFAULT_USER_TIMEZONE,
-  };
-  let lookups = 0;
+test("parallel findOrCreate calls use atomic upsert and resolve one logical user", async () => {
+  const users = new Map();
+  let logicalCreates = 0;
   const service = new UserService({
     user: {
-      findUnique: async () => {
-        lookups += 1;
-        return lookups === 1 ? null : winner;
+      upsert: async ({ where, create }) => {
+        const key = where.telegramId.toString();
+        if (!users.has(key)) {
+          logicalCreates += 1;
+          users.set(key, { id: "winner", ...create });
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+        return users.get(key);
       },
-      create: async () => {
-        throw new Prisma.PrismaClientKnownRequestError("unique conflict", {
-          code: "P2002",
-          clientVersion: "test",
-          meta: { target: ["telegramId"] },
-        });
+    },
+  });
+
+  const results = await Promise.all(
+    Array.from({ length: 20 }, () =>
+      service.findOrCreateByTelegramId(123n, "alice"),
+    ),
+  );
+
+  assert.equal(logicalCreates, 1);
+  assert.equal(users.size, 1);
+  assert.deepEqual(new Set(results.map(({ id }) => id)), new Set(["winner"]));
+});
+
+test("findOrCreate returns the concurrent winner after a P2002 upsert conflict", async () => {
+  const conflict = new Prisma.PrismaClientKnownRequestError(
+    "unique constraint conflict",
+    { code: "P2002", clientVersion: "test" },
+  );
+  const winner = { id: "winner", telegramId: 123n, username: "alice" };
+  let lookup;
+  const service = new UserService({
+    user: {
+      upsert: async () => {
+        throw conflict;
+      },
+      findUnique: async (args) => {
+        lookup = args;
+        return winner;
       },
     },
   });
 
   assert.equal(await service.findOrCreateByTelegramId(123n, "alice"), winner);
-  assert.equal(lookups, 2);
+  assert.deepEqual(lookup, { where: { telegramId: 123n } });
+});
+
+test("findOrCreate rethrows the original P2002 when no concurrent winner exists", async () => {
+  const conflict = new Prisma.PrismaClientKnownRequestError(
+    "unique constraint conflict",
+    { code: "P2002", clientVersion: "test" },
+  );
+  const service = new UserService({
+    user: {
+      upsert: async () => {
+        throw conflict;
+      },
+      findUnique: async () => null,
+    },
+  });
+
+  await assert.rejects(
+    service.findOrCreateByTelegramId(123n, "alice"),
+    (error) => error === conflict,
+  );
+});
+
+test("findOrCreate rethrows a non-P2002 error without a fallback lookup", async () => {
+  const failure = new Error("database unavailable");
+  let lookupCalled = false;
+  const service = new UserService({
+    user: {
+      upsert: async () => {
+        throw failure;
+      },
+      findUnique: async () => {
+        lookupCalled = true;
+        return null;
+      },
+    },
+  });
+
+  await assert.rejects(
+    service.findOrCreateByTelegramId(123n, "alice"),
+    (error) => error === failure,
+  );
+  assert.equal(lookupCalled, false);
 });
 
 test("latest prompt lookup accepts only sent deliveries in deterministic order", async () => {
@@ -95,6 +161,24 @@ test("latest prompt lookup accepts only sent deliveries in deterministic order",
   assert.deepEqual(query, {
     where: { userId: "user-1", deliveryStatus: "sent" },
     orderBy: [{ sentAt: "desc" }, { id: "desc" }],
+  });
+});
+
+test("active prompt preflight uses a cheap existence query", async () => {
+  let query;
+  const service = new PromptService({
+    prompt: {
+      findFirst: async (args) => {
+        query = args;
+        return { id: "prompt-1" };
+      },
+    },
+  });
+
+  assert.equal(await service.hasActivePrompt(), true);
+  assert.deepEqual(query, {
+    where: { isActive: true },
+    select: { id: true },
   });
 });
 

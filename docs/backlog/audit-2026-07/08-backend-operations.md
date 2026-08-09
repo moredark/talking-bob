@@ -1,7 +1,7 @@
 # Backend operations и production readiness
 
 - Priority: `P1`
-- Status: `todo`
+- Status: `done`
 - Scope: backend container, health, deploy, recovery
 - Admin: out of scope
 - Depends on: `01`–`04`, `07`

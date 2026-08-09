@@ -7,6 +7,7 @@ export {
   ILLMService,
   AgentTone,
   FeedbackResult,
+  SpeechAnalysisResult,
   ConversationMessage,
   LLM_SERVICE,
 } from "./interfaces";

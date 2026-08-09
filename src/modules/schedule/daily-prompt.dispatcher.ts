@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { Bot, GrammyError, HttpError } from "grammy";
 import {
   DeliveryClaim,
@@ -6,21 +6,45 @@ import {
   IMessageDispatcher,
 } from "./message-dispatcher.interface";
 import { ScheduleService } from "./schedule.service";
+import { ErrorLogService, ObservabilityContextService } from "../error-log";
 
 @Injectable()
 export class DailyPromptDispatcher implements IMessageDispatcher {
   private readonly logger = new Logger(DailyPromptDispatcher.name);
   private bot: Bot | null = null;
 
-  constructor(private readonly scheduleService: ScheduleService) {}
+  constructor(
+    private readonly scheduleService: ScheduleService,
+    @Optional() private readonly errorLog?: ErrorLogService,
+    @Optional() private readonly observability?: ObservabilityContextService,
+  ) {}
 
   setBot(bot: Bot): void {
     this.bot = bot;
   }
 
   async dispatch(claim: DeliveryClaim): Promise<DeliveryOutcome> {
+    if (!this.observability) return this.dispatchCorrelated(claim);
+    const current = this.observability.current();
+    return this.observability.run(
+      {
+        ...current,
+        correlationId: this.observability.createCorrelationId("delivery"),
+        userId: claim.user.id,
+        requestId: claim.userPromptId,
+      },
+      () => this.dispatchCorrelated(claim),
+    );
+  }
+
+  private async dispatchCorrelated(claim: DeliveryClaim): Promise<DeliveryOutcome> {
     if (!this.bot) {
       this.logger.error("Bot not initialized");
+      await this.errorLog?.capture({
+        type: "system", service: "scheduler", operation: "delivery.bot_unavailable",
+        userId: claim.user.id, requestId: claim.userPromptId,
+        code: "bot_unavailable", retryable: true,
+      });
       return "not_attempted";
     }
 
@@ -74,10 +98,14 @@ export class DailyPromptDispatcher implements IMessageDispatcher {
         attemptedAt,
       );
       return completed ? "sent" : "pending";
-    } catch {
+    } catch (error) {
       this.logger.error(
-        `Could not persist successful delivery for user prompt ${claim.userPromptId}`,
+        "Could not persist successful scheduled delivery",
       );
+      await this.errorLog?.capture({
+        type: "system", service: "scheduler", operation: "delivery.persist_success",
+        userId: claim.user.id, requestId: claim.userPromptId, error, retryable: true,
+      });
       return "pending";
     }
   }
@@ -95,8 +123,13 @@ export class DailyPromptDispatcher implements IMessageDispatcher {
             attemptedAt,
           );
         this.logger.warn(
-          `Telegram rejected delivery for user prompt ${claim.userPromptId}`,
+          "Telegram rejected scheduled delivery",
         );
+        await this.errorLog?.capture({
+          type: "telegram", service: "scheduler", operation: "delivery.send",
+          userId: claim.user.id, requestId: claim.userPromptId, error,
+          retryable: false, code: "definite",
+        });
         return completed ? "failed" : "pending";
       }
 
@@ -106,13 +139,23 @@ export class DailyPromptDispatcher implements IMessageDispatcher {
       );
       const kind = error instanceof HttpError ? "transport" : "unknown";
       this.logger.warn(
-        `Telegram delivery outcome is ambiguous for user prompt ${claim.userPromptId} (${kind})`,
+        `Telegram scheduled delivery outcome is ambiguous (${kind})`,
       );
+      await this.errorLog?.capture({
+        type: "telegram", service: "scheduler", operation: "delivery.send",
+        userId: claim.user.id, requestId: claim.userPromptId, error,
+        retryable: true, code: kind,
+      });
       return "pending";
-    } catch {
+    } catch (persistenceError) {
       this.logger.error(
-        `Could not persist failed delivery outcome for user prompt ${claim.userPromptId}`,
+        "Could not persist failed scheduled delivery outcome",
       );
+      await this.errorLog?.capture({
+        type: "system", service: "scheduler", operation: "delivery.persist_failure",
+        userId: claim.user.id, requestId: claim.userPromptId,
+        error: persistenceError, retryable: true,
+      });
       return "pending";
     }
   }

@@ -1,7 +1,7 @@
 # Качество выбора prompts и решение по TTS
 
 - Priority: `P2`
-- Status: `todo`
+- Status: `done`
 - Scope: product behavior, prompts, TTS contract
 - Admin: out of scope
 - Depends on: `02`, `03`
@@ -49,3 +49,31 @@ Prompt выбирается случайно из полного активно�
 - Случайный `ORDER BY random()` и загрузка всех prompts имеют разные ограничения; выбрать подход под ожидаемый размер каталога.
 - Будущая TTS-задача должна отдельно определить стоимость, latency, формат Telegram voice и cache policy до возврата provider-кода в runtime.
 - Не менять существующий seed без теста идемпотентности.
+
+## Реализовано 2026-08-08
+
+- Общая стратегия использует окно `N=5`. Manual и scheduled selection
+  сериализуются по строке пользователя, читают одну историю `pending`/`sent`
+  активных prompts и сохраняют новую `pending` reservation в той же транзакции.
+- Для пустого каталога claim не создаётся, единственный prompt переиспользуется,
+  каталоги до пяти prompts выбирают первый безопасный кандидат детерминированно,
+  а большие каталоги — случайный кандидат вне recent window. `failed` и история
+  деактивированных prompts не участвуют.
+- Scheduled batch загружает histories одним bounded SQL-запросом; добавлен
+  descending history index. Manual preflight не расходует quota при пустом
+  каталоге, а гонка с деактивацией после preflight освобождает admission.
+- `/start` сохраняет onboarding, callback «Новый вопрос» использует отдельный
+  handler без welcome. `topic` остаётся runtime-текстом; `difficulty`, `tags` и
+  `textContent` — metadata, `sortOrder` — только admin ordering.
+- Runtime TTS и его конфигурация не добавлены. Поддержаны текст и заранее
+  загруженный Telegram `audioFileId` с существующим text fallback.
+
+## Проверено 2026-08-08
+
+- `npm test`: 150/150 успешно.
+- `npx prisma validate`, `npx prisma generate`, `git diff --check`: успешно.
+- Покрыты 0/1/N=5/large catalogs, независимые histories двух пользователей,
+  batched selection, manual user lock, quota release и callback без welcome.
+- Live PostgreSQL migration, реальные manual/manual и manual/scheduled locks,
+  а также `EXPLAIN (ANALYZE, BUFFERS)` history query не запускались: в окружении
+  нет PostgreSQL/Docker. Это остаётся integration/operations gate.

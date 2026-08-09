@@ -1,7 +1,7 @@
 # Приватность, наблюдаемость и целостность данных
 
 - Priority: `P1`
-- Status: `todo`
+- Status: `done`
 - Scope: logging, errors, user creation, rate limiting
 - Admin: out of scope
 - Depends on: `01`, `02`, `03`
@@ -63,3 +63,39 @@ Transcript попадает в обычные application logs, а структ�
 - Текущие calendar-day helper и DST-тесты не переписывать без причины; общий resolver относится к задаче `02`, а эта задача добавляет persisted identity и snapshot активного quota window.
 - Privacy retention — продуктовое и юридическое решение; срок нельзя выбирать случайно в коде.
 - Error metadata должна быть небольшой и версионируемой.
+
+## Реализовано 2026-08-08
+
+- Ошибки Telegram, Whisper, LLM, scheduler и retention записываются через
+  allowlist-only контекст версии 1. Сырые `message`, `stack`, произвольная
+  metadata, transcript, prompt, provider body, токены, voice file ID/URL в
+  structured log не попадают. Отказ error-log storage даёт только фиксированное
+  безопасное сообщение и не заменяет исходную ошибку.
+- Один Telegram update проходит через `AsyncLocalStorage` correlation context;
+  каждая scheduled/manual delivery получает изолированный дочерний context.
+  `correlationId`, operation, status, retryability и latency вынесены в
+  индексируемые поля `error_logs` и доступны через существующий admin endpoint.
+- User find-or-create переведён на атомарный Prisma upsert. Rolling limits и
+  calendar-day limit расходуются одной Serializable-транзакцией с полным retry.
+- Добавлены immutable `quota_windows` с snapshot effective timezone и точными
+  UTC start/end. Legacy `dialog_start` backfill связан с окнами; timezone меняет
+  только следующее окно. Неуспех до сохранения manual dialog удаляет request и
+  пустое окно, scheduled delivery лимит не расходует.
+- Политика MVP: 30 дней по умолчанию, настраиваемые отдельно для sanitized
+  error logs, rate-limit audit и содержимого закрытых разговоров. Daily cleanup
+  удаляет delivery chunks/messages, очищает voice ID/transcript/analysis и
+  сохраняет lifecycle/provenance. Активные quota windows, включая 25-часовые
+  DST-дни, от очистки защищены. После purge `/report` сообщает об истечении
+  срока хранения явно.
+
+## Проверено 2026-08-08
+
+- `npm test`: 142/142 успешно.
+- `npx prisma validate`, `npx prisma generate`, `git diff --check`: успешно.
+- Покрыты sanitizer, storage failure, provider и полный voice-flow без утечек,
+  correlation isolation, atomic admission, 23/25-часовые окна, timezone change,
+  reset/release, fixed-time cleanup и retention cron failure.
+- Live PostgreSQL migration/backfill, реальные row locks, SSI contention и
+  concurrent upsert в этом окружении не запускались: PostgreSQL/Docker
+  недоступны. Unit-тесты конкурентности используют детерминированный fake и не
+  заменяют этот integration gate.

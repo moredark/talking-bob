@@ -6,6 +6,11 @@ export interface FeedbackResult {
   overallScore: number;
 }
 
+export interface SpeechAnalysisResult extends FeedbackResult {
+  version: 1;
+  kind: "model" | "fallback";
+}
+
 export interface ConversationMessage {
   role: "user" | "assistant";
   content: string;
@@ -17,7 +22,7 @@ export interface ILLMService {
     topic: string,
     targetLanguage?: string,
     tone?: AgentTone,
-  ): Promise<FeedbackResult>;
+  ): Promise<SpeechAnalysisResult>;
 
   generateFollowUp(
     conversationHistory: ConversationMessage[],

@@ -23,15 +23,24 @@ function runtimeConfig(download = {}, voice = {}) {
   };
 }
 
-function createSubject({ voice = {}, config = runtimeConfig() } = {}) {
+function createSubject({
+  voice = {},
+  config = runtimeConfig(),
+  precheckResult = { outcome: "accepted" },
+  acceptanceResult,
+  assistantResult = { outcome: "inserted" },
+} = {}) {
   const calls = {
     findUser: 0,
-    checkLimit: 0,
-    recordAction: 0,
+    consumeLimit: 0,
     latestPrompt: 0,
     getFile: 0,
     whisper: 0,
     llm: 0,
+    precheck: 0,
+    accept: 0,
+    addAssistant: 0,
+    report: 0,
     replies: [],
   };
   const handler = new VoiceHandler(
@@ -49,16 +58,30 @@ function createSubject({ voice = {}, config = runtimeConfig() } = {}) {
       getPromptById: async () => ({ id: "prompt-1", topic: "Travel" }),
     },
     {
+      precheckVoiceAcceptance: async () => {
+        calls.precheck += 1;
+        return precheckResult;
+      },
+      acceptVoiceAndMaybeClaimGeneration: async () => {
+        calls.accept += 1;
+        return acceptanceResult ?? {
+          outcome: "accepted",
+          message: { id: "user-message-1" },
+          userMessageCount: 1,
+          generationClaim: null,
+        };
+      },
       addMessage: async () => undefined,
       getMessages: async () => [],
+      addAssistantMessageIfOpen: async () => {
+        calls.addAssistant += 1;
+        return assistantResult;
+      },
     },
     {
-      checkLimit: async () => {
-        calls.checkLimit += 1;
-        return true;
-      },
-      recordAction: async () => {
-        calls.recordAction += 1;
+      consumeLimit: async () => {
+        calls.consumeLimit += 1;
+        return { allowed: true, requestId: "request-1" };
       },
     },
     {
@@ -73,15 +96,22 @@ function createSubject({ voice = {}, config = runtimeConfig() } = {}) {
         return "What did you enjoy most?";
       },
     },
-    { generateReport: async () => undefined },
+    {
+      generateClaimedReport: async () => {
+        calls.report += 1;
+      },
+    },
     config,
   );
   const context = {
     from: { id: 123 },
     chat: { id: 123 },
     message: {
+      message_id: 77,
+      chat: { id: 123 },
       voice: { file_id: "voice-1", duration: 5, ...voice },
     },
+    update: { update_id: 9001 },
     api: {
       getFile: async () => {
         calls.getFile += 1;
@@ -97,8 +127,7 @@ function createSubject({ voice = {}, config = runtimeConfig() } = {}) {
 function assertNoDownstreamWork(calls) {
   for (const name of [
     "findUser",
-    "checkLimit",
-    "recordAction",
+    "consumeLimit",
     "latestPrompt",
     "getFile",
     "whisper",
@@ -222,4 +251,80 @@ test("VoiceHandler aborts a stalled bounded download and gives a user-facing err
   assert.equal(fetchCalls, 2);
   assert.equal(calls.whisper, 0);
   assert.match(calls.replies.at(-1), /ошибка при обработке/i);
+});
+
+for (const outcome of ["duplicate", "closed"]) {
+  test(`VoiceHandler ${outcome} precheck stops before quota, download, or AI work`, async () => {
+    const { calls, context, handler } = createSubject({ precheckResult: { outcome } });
+    await handler.handle(context);
+
+    assert.equal(calls.precheck, 1);
+    assert.equal(calls.consumeLimit, 0);
+    assert.equal(calls.getFile, 0);
+    assert.equal(calls.whisper, 0);
+    assert.equal(calls.llm, 0);
+    assert.equal(calls.accept, 0);
+    assert.equal(calls.replies.length, outcome === "closed" ? 1 : 0);
+    if (outcome === "closed") assert.match(calls.replies[0], /разговор уже завершён/i);
+  });
+}
+
+test("VoiceHandler third accepted voice delegates exactly one claimed report", async () => {
+  const { calls, context, handler } = createSubject({
+    acceptanceResult: {
+      outcome: "accepted",
+      message: { id: "user-message-3" },
+      userMessageCount: 3,
+      generationClaim: { responseId: "response-1", claimToken: "claim-1", claimExpiresAt: new Date() },
+    },
+  });
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response("audio");
+  try { await handler.handle(context); } finally { global.fetch = originalFetch; }
+
+  assert.equal(calls.accept, 1);
+  assert.equal(calls.report, 1);
+  assert.equal(calls.llm, 0);
+  assert.equal(calls.addAssistant, 0);
+  assert.equal(calls.replies.length, 0);
+});
+
+test("VoiceHandler authoritative fourth-voice closure does not invoke either LLM path", async () => {
+  const { calls, context, handler } = createSubject({ acceptanceResult: { outcome: "closed" } });
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response("audio");
+  try { await handler.handle(context); } finally { global.fetch = originalFetch; }
+
+  assert.equal(calls.whisper, 1);
+  assert.equal(calls.accept, 1);
+  assert.equal(calls.llm, 0);
+  assert.equal(calls.report, 0);
+  assert.equal(calls.replies.length, 1);
+  assert.match(calls.replies[0], /разговор уже завершён/i);
+});
+
+test("VoiceHandler authoritative duplicate after transcription sends no follow-up", async () => {
+  const { calls, context, handler } = createSubject({
+    acceptanceResult: { outcome: "duplicate", message: { id: "existing-message" } },
+  });
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response("audio");
+  try { await handler.handle(context); } finally { global.fetch = originalFetch; }
+
+  assert.equal(calls.whisper, 1);
+  assert.equal(calls.accept, 1);
+  assert.equal(calls.llm, 0);
+  assert.equal(calls.report, 0);
+  assert.equal(calls.replies.length, 0);
+});
+
+test("VoiceHandler suppresses a generated follow-up when the guarded assistant insert is stale", async () => {
+  const { calls, context, handler } = createSubject({ assistantResult: { outcome: "stale" } });
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response("audio");
+  try { await handler.handle(context); } finally { global.fetch = originalFetch; }
+
+  assert.equal(calls.llm, 1);
+  assert.equal(calls.addAssistant, 1);
+  assert.equal(calls.replies.length, 0);
 });

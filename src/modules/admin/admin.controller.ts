@@ -139,11 +139,12 @@ export class AdminController {
     @Query("limit") limit?: string,
     @Query("type") type?: ErrorType,
     @Query("service") service?: ErrorService,
+    @Query("correlationId") correlationId?: string,
   ) {
     const pageNum = parseInt(page || "1", 10);
     const limitNum = parseInt(limit || "50", 10);
 
-    return this.adminService.getErrorLogs(pageNum, limitNum, type, service);
+    return this.adminService.getErrorLogs(pageNum, limitNum, type, service, correlationId);
   }
 
   @Get("error-logs/:id")

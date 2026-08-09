@@ -1,2 +1,9 @@
 export { ConversationModule } from "./conversation.module";
-export { ConversationService } from "./conversation.service";
+export {
+  ConversationService,
+  AcceptVoiceData,
+  VoicePrecheckResult,
+  ConversationGenerationClaim,
+  AcceptVoiceResult,
+  GuardedAssistantResult,
+} from "./conversation.service";

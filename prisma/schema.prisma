@@ -19,6 +19,29 @@ enum UserPromptDeliveryStatus {
   failed
 }
 
+enum ConversationStatus {
+  open
+  closed
+}
+
+enum ReportGenerationStatus {
+  generating
+  generated
+  failed
+}
+
+enum ReportAnalysisKind {
+  model
+  fallback
+  legacy
+}
+
+enum ReportDeliveryStatus {
+  pending
+  delivered
+  failed
+}
+
 model User {
   id                 String    @id @default(uuid())
   telegramId         BigInt    @unique
@@ -40,6 +63,7 @@ model User {
   userPrompts   UserPrompt[]
   userResponses UserResponse[]
   userRequests  UserRequest[]
+  quotaWindows  QuotaWindow[]
 
   @@index([nextPromptAt])
   @@map("users")
@@ -78,6 +102,8 @@ model UserPrompt {
   deliveryAttemptedAt    DateTime?                @db.Timestamptz(3)
   lastDeliveryErrorCode  String?                  @db.VarChar(64)
   lastDeliveryErrorAt    DateTime?                @db.Timestamptz(3)
+  conversationStatus     ConversationStatus       @default(open)
+  conversationClosedAt   DateTime?                @db.Timestamptz(3)
 
   user   User   @relation(fields: [userId], references: [id])
   prompt Prompt @relation(fields: [promptId], references: [id])
@@ -86,20 +112,23 @@ model UserPrompt {
   conversationMessages ConversationMessage[]
 
   @@index([userId])
+  @@index([userId, createdAt(sort: Desc), id(sort: Desc)], map: "user_prompts_user_created_id_idx")
   @@index([promptId])
   @@index([userId, deliveryStatus, sentAt])
   @@index([deliveryStatus, deliveryAttemptedAt, claimExpiresAt], map: "user_prompts_delivery_retry_idx")
+  @@index([conversationStatus, conversationClosedAt], map: "user_prompts_conversation_status_idx")
   @@index([scheduledOccurrenceKey])
   @@map("user_prompts")
 }
 
 model ConversationMessage {
-  id           String   @id @default(uuid())
-  userPromptId String
-  role         String
-  content      String
-  voiceFileId  String?
-  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  id               String   @id @default(uuid())
+  userPromptId     String
+  role             String
+  content          String
+  voiceFileId      String?
+  telegramUpdateId BigInt?  @unique
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
 
   userPrompt UserPrompt @relation(fields: [userPromptId], references: [id])
 
@@ -108,31 +137,92 @@ model ConversationMessage {
 }
 
 model UserResponse {
-  id           String   @id @default(uuid())
-  userId       String
-  userPromptId String   @unique
-  voiceFileId  String
-  transcript   String?
-  analysis     String?
-  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  id                       String                 @id @default(uuid())
+  userId                   String
+  userPromptId             String                 @unique
+  voiceFileId              String?
+  transcript               String?
+  analysis                 String?
+  generationStatus         ReportGenerationStatus @default(generating)
+  generationRequestKey     String                 @db.VarChar(160)
+  generationClaimToken     String?                @db.Uuid
+  generationClaimExpiresAt DateTime?              @db.Timestamptz(3)
+  generationAttemptedAt    DateTime               @db.Timestamptz(3)
+  generatedAt              DateTime?              @db.Timestamptz(3)
+  lastGenerationErrorCode  String?                @db.VarChar(64)
+  lastGenerationErrorAt    DateTime?              @db.Timestamptz(3)
+  analysisVersion          Int?
+  analysisKind             ReportAnalysisKind?
+  sensitiveDataPurgedAt    DateTime?              @db.Timestamptz(3)
+  createdAt                DateTime               @default(now()) @db.Timestamptz(3)
 
   user       User       @relation(fields: [userId], references: [id])
   userPrompt UserPrompt @relation(fields: [userPromptId], references: [id])
 
+  reportDeliveryRequests ReportDeliveryRequest[]
+
   @@index([userId])
+  @@index([generationStatus, generationAttemptedAt, generationClaimExpiresAt], map: "user_responses_generation_reclaim_idx")
+  @@index([sensitiveDataPurgedAt], map: "user_responses_sensitive_data_purged_idx")
   @@map("user_responses")
 }
 
-model UserRequest {
-  id        String   @id @default(uuid())
-  userId    String
-  action    String
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
+model ReportDeliveryRequest {
+  id                    String               @id @default(uuid()) @db.Uuid
+  userResponseId        String
+  requestKey            String               @db.VarChar(160)
+  chunks                Json
+  nextChunkIndex        Int                  @default(0)
+  status                ReportDeliveryStatus @default(pending)
+  claimToken            String?              @db.Uuid
+  claimExpiresAt        DateTime?            @db.Timestamptz(3)
+  deliveryAttemptedAt   DateTime?            @db.Timestamptz(3)
+  deliveredAt           DateTime?            @db.Timestamptz(3)
+  lastDeliveryErrorCode String?              @db.VarChar(64)
+  lastDeliveryErrorAt   DateTime?            @db.Timestamptz(3)
+  createdAt             DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime             @updatedAt @db.Timestamptz(3)
 
-  user User @relation(fields: [userId], references: [id])
+  userResponse UserResponse @relation(fields: [userResponseId], references: [id])
+
+  @@unique([userResponseId, requestKey])
+  @@index([status, deliveryAttemptedAt, claimExpiresAt], map: "report_delivery_requests_reclaim_idx")
+  @@map("report_delivery_requests")
+}
+
+model UserRequest {
+  id            String   @id @default(uuid())
+  userId        String
+  quotaWindowId String?
+  action        String
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+
+  user        User         @relation(fields: [userId], references: [id])
+  quotaWindow QuotaWindow? @relation(fields: [quotaWindowId], references: [id])
 
   @@index([userId, createdAt])
+  @@index([userId, action, createdAt])
+  @@index([quotaWindowId, createdAt])
+  @@index([createdAt])
   @@map("user_requests")
+}
+
+model QuotaWindow {
+  id               String   @id @default(uuid())
+  userId           String
+  action           String
+  timezoneSnapshot String   @db.VarChar(128)
+  windowStart      DateTime @db.Timestamptz(3)
+  windowEnd        DateTime @db.Timestamptz(3)
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+
+  user         User          @relation(fields: [userId], references: [id])
+  userRequests UserRequest[]
+
+  @@unique([userId, action, windowStart, windowEnd])
+  @@index([userId, action, windowEnd])
+  @@index([windowEnd])
+  @@map("quota_windows")
 }
 
 model AdminUser {
@@ -145,17 +235,25 @@ model AdminUser {
 }
 
 model ErrorLog {
-  id        String   @id @default(uuid())
-  type      String
-  service   String
-  message   String
-  stack     String?
-  metadata  Json?
-  userId    String?
-  createdAt DateTime @default(now())
+  id            String   @id @default(uuid())
+  type          String
+  service       String
+  operation     String   @default("unknown") @db.VarChar(80)
+  correlationId String?  @db.VarChar(160)
+  statusCode    Int?
+  retryable     Boolean?
+  latencyMs     Int?
+  errorKind     String   @default("LegacyError") @db.VarChar(80)
+  message       String
+  stack         String?
+  metadata      Json?
+  userId        String?
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
 
   @@index([type])
   @@index([service])
   @@index([createdAt])
+  @@index([correlationId, createdAt], map: "error_logs_correlation_created_idx")
+  @@index([service, operation, createdAt], map: "error_logs_service_operation_created_idx")
   @@map("error_logs")
 }

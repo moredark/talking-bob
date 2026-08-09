@@ -40,6 +40,27 @@ function deferred() {
   return { promise, resolve };
 }
 
+function analysisResponse(content) {
+  return new Response(
+    JSON.stringify({ choices: [{ message: { content } }] }),
+    { headers: { "content-type": "application/json" } },
+  );
+}
+
+function standardFallback(overallScore = 5) {
+  return {
+    version: 1,
+    kind: "fallback",
+    summary:
+      "Модель не предоставила полный анализ. Показана базовая автоматическая оценка ответа.",
+    improvementPoints: [
+      "Добавьте больше деталей: причина, пример, сравнение.",
+      "Используйте связки: because, however, for example, in my opinion.",
+    ],
+    overallScore,
+  };
+}
+
 async function eventually(predicate, attempts = 20) {
   for (let index = 0; index < attempts; index += 1) {
     if (predicate()) return;
@@ -153,6 +174,146 @@ test("LLM times out an aborted provider POST without transport retry", async () 
 
   assert.equal(calls, 1);
   assert.match(result, /specific example/i);
+});
+
+test("LLM marks a valid speech analysis response as model output", async () => {
+  const service = new LLMService(config(), new AiRequestLimiterService(1));
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    return analysisResponse(
+      JSON.stringify({
+        summary: "  Clear answer.  ",
+        improvementPoints: [" Use articles. ", "Use articles.", ""],
+        overallScore: 8,
+      }),
+    );
+  };
+
+  try {
+    assert.deepEqual(await service.analyzeSpeech("I visited London", "Travel"), {
+      version: 1,
+      kind: "model",
+      summary: "Clear answer.",
+      improvementPoints: ["Use articles."],
+      overallScore: 8,
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+  assert.equal(calls, 1);
+});
+
+test("LLM marks valid JSON with an invalid analysis schema as fallback", async () => {
+  const service = new LLMService(config(), new AiRequestLimiterService(1));
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    return analysisResponse(
+      JSON.stringify({
+        summary: "Schema was invalid.",
+        improvementPoints: [],
+        overallScore: 11,
+      }),
+    );
+  };
+
+  try {
+    assert.deepEqual(await service.analyzeSpeech("Short answer", "Travel"), {
+      version: 1,
+      kind: "fallback",
+      summary: "Schema was invalid.",
+      improvementPoints: [],
+      overallScore: 5,
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+  assert.equal(calls, 1);
+});
+
+test("LLM marks malformed non-empty analysis content as fallback", async () => {
+  const service = new LLMService(config(), new AiRequestLimiterService(1));
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    return analysisResponse(
+      '{"summary":"Partial analysis","improvementPoints":["Use articles"],"overallScore":',
+    );
+  };
+
+  try {
+    assert.deepEqual(await service.analyzeSpeech("Short answer", "Travel"), {
+      version: 1,
+      kind: "fallback",
+      summary: "Partial analysis",
+      improvementPoints: ["Use articles"],
+      overallScore: 5,
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+  assert.equal(calls, 1);
+});
+
+test("LLM retries empty analysis content twice before returning fallback", async () => {
+  const service = new LLMService(config(), new AiRequestLimiterService(1));
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    return analysisResponse("   ");
+  };
+
+  try {
+    assert.deepEqual(
+      await service.analyzeSpeech("This is a short answer", "Travel"),
+      standardFallback(),
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+  assert.equal(calls, 2);
+});
+
+test("LLM converts non-lifecycle provider errors to speech analysis fallback", async (t) => {
+  const cases = [
+    {
+      name: "transport error",
+      fetch: async () => {
+        throw new Error("network unavailable");
+      },
+    },
+    {
+      name: "provider HTTP error",
+      fetch: async () => new Response("unavailable", { status: 503 }),
+    },
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, async () => {
+      const service = new LLMService(config(), new AiRequestLimiterService(1));
+      const originalFetch = global.fetch;
+      let calls = 0;
+      global.fetch = async (...args) => {
+        calls += 1;
+        return scenario.fetch(...args);
+      };
+
+      try {
+        assert.deepEqual(
+          await service.analyzeSpeech("This is a short answer", "Travel"),
+          standardFallback(),
+        );
+      } finally {
+        global.fetch = originalFetch;
+      }
+      assert.equal(calls, 1);
+    });
+  }
 });
 
 test("LLM limiter lifecycle errors escape both fallback paths", async () => {

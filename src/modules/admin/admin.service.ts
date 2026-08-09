@@ -104,6 +104,12 @@ export interface ErrorLogItem {
   id: string;
   type: string;
   service: string;
+  operation: string;
+  correlationId: string | null;
+  statusCode: number | null;
+  retryable: boolean | null;
+  latencyMs: number | null;
+  errorKind: string;
   message: string;
   stack: string | null;
   metadata: unknown;
@@ -567,10 +573,12 @@ export class AdminService {
     limit: number,
     type?: ErrorType,
     service?: ErrorServiceType,
+    correlationId?: string,
   ): Promise<PaginatedResult<ErrorLogItem>> {
     const result = await this.errorLogService.getLogs({
       type,
       service,
+      correlationId,
       limit,
       offset: (page - 1) * limit,
     });
@@ -580,6 +588,12 @@ export class AdminService {
         id: log.id,
         type: log.type,
         service: log.service,
+        operation: log.operation,
+        correlationId: log.correlationId,
+        statusCode: log.statusCode,
+        retryable: log.retryable,
+        latencyMs: log.latencyMs,
+        errorKind: log.errorKind,
         message: log.message,
         stack: log.stack,
         metadata: log.metadata,
@@ -601,6 +615,12 @@ export class AdminService {
       id: log.id,
       type: log.type,
       service: log.service,
+      operation: log.operation,
+      correlationId: log.correlationId,
+      statusCode: log.statusCode,
+      retryable: log.retryable,
+      latencyMs: log.latencyMs,
+      errorKind: log.errorKind,
       message: log.message,
       stack: log.stack,
       metadata: log.metadata,

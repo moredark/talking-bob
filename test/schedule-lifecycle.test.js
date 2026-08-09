@@ -303,6 +303,7 @@ test("disabling a schedule atomically clears nextPromptAt", async () => {
 function createClaimPrisma({
   dueUsers = [],
   prompts = [],
+  historyRows = [],
   reclaimRows = [],
   occurrenceKeys = new Set(),
 } = {}) {
@@ -310,6 +311,9 @@ function createClaimPrisma({
     reclaimSql: [],
     dueSql: [],
     insertSql: [],
+    insertValues: [],
+    historySql: [],
+    historyValues: [],
     occurrenceKeys,
     userUpdates: [],
     reclaimUpdates: [],
@@ -318,6 +322,11 @@ function createClaimPrisma({
   const tx = {
     $queryRaw: async (query) => {
       const text = sqlText(query);
+      if (text.includes('SELECT recent."userId"')) {
+        calls.historySql.push(text);
+        calls.historyValues.push(query.values);
+        return historyRows;
+      }
       if (text.includes('FROM "user_prompts" up')) {
         calls.reclaimSql.push(text);
         const result = reclaimRead ? [] : reclaimRows;
@@ -330,6 +339,7 @@ function createClaimPrisma({
       }
       if (text.includes('INSERT INTO "user_prompts"')) {
         calls.insertSql.push(text);
+        calls.insertValues.push(query.values);
         const key = query.values.find(
           (value) =>
             typeof value === "string" && value.startsWith("scheduled:"),
@@ -363,6 +373,167 @@ function createClaimPrisma({
     },
   };
 }
+
+function createManualClaimPrisma({ prompts = [], historyRows = [], lockedUser } = {}) {
+  const calls = {
+    sql: [],
+    historySql: [],
+    creates: [],
+  };
+  const tx = {
+    $queryRaw: async (query) => {
+      const text = sqlText(query);
+      if (text.includes('SELECT recent."userId"')) {
+        calls.historySql.push(text);
+        return historyRows;
+      }
+      calls.sql.push(text);
+      return lockedUser ? [lockedUser] : [];
+    },
+    prompt: {
+      findMany: async () => prompts,
+    },
+    userPrompt: {
+      create: async (args) => {
+        calls.creates.push(args);
+        return { id: "manual-user-prompt" };
+      },
+    },
+  };
+  return {
+    calls,
+    prisma: { $transaction: async (callback) => callback(tx) },
+  };
+}
+
+test("manual selection handles empty and single-prompt catalogs safely", async () => {
+  const user = { id: "user-1", telegramId: 123n };
+  const empty = createManualClaimPrisma({ lockedUser: user });
+  assert.equal(
+    await new ScheduleService(empty.prisma).createManualClaim(user),
+    null,
+  );
+  assert.equal(empty.calls.creates.length, 0);
+
+  const onlyPrompt = { id: "prompt-1", topic: "Only", audioFileId: null };
+  const single = createManualClaimPrisma({
+    lockedUser: user,
+    prompts: [onlyPrompt],
+    historyRows: [{ userId: user.id, promptId: onlyPrompt.id }],
+  });
+  const claim = await new ScheduleService(single.prisma).createManualClaim(user);
+
+  assert.equal(claim.prompt.id, "prompt-1");
+  assert.match(single.calls.sql[0], /FOR UPDATE/);
+  assert.equal(single.calls.creates[0].data.promptId, "prompt-1");
+});
+
+test("manual selection uses pending and sent active history with a deterministic small-catalog fallback", async () => {
+  const user = { id: "user-1", telegramId: 123n };
+  const prompts = [
+    { id: "prompt-1", topic: "One", audioFileId: null },
+    { id: "prompt-2", topic: "Two", audioFileId: null },
+    { id: "prompt-3", topic: "Three", audioFileId: null },
+  ];
+  const fixture = createManualClaimPrisma({
+    lockedUser: user,
+    prompts,
+    historyRows: [
+      { userId: user.id, promptId: "prompt-1" },
+      { userId: user.id, promptId: "prompt-2" },
+    ],
+  });
+
+  const claim = await new ScheduleService(fixture.prisma).createManualClaim(user);
+
+  assert.equal(claim.prompt.id, "prompt-3");
+  assert.match(fixture.calls.historySql[0], /"deliveryStatus" IN/);
+  assert.match(fixture.calls.historySql[0], /'pending'/);
+  assert.match(fixture.calls.historySql[0], /'sent'/);
+  assert.doesNotMatch(fixture.calls.historySql[0], /'failed'/);
+  assert.match(fixture.calls.historySql[0], /p\."isActive" = true/);
+  assert.match(fixture.calls.historySql[0], /recent\.position <=/);
+});
+
+test("exact five-prompt catalog deterministically selects the prompt outside four recent reservations", async () => {
+  const user = { id: "user-1", telegramId: 123n };
+  const prompts = Array.from({ length: 5 }, (_, index) => ({
+    id: `prompt-${index + 1}`,
+    topic: `Topic ${index + 1}`,
+    audioFileId: null,
+  }));
+  const fixture = createManualClaimPrisma({
+    lockedUser: user,
+    prompts,
+    historyRows: prompts.slice(0, 4).map(({ id }) => ({
+      userId: user.id,
+      promptId: id,
+    })),
+  });
+
+  const claim = await new ScheduleService(fixture.prisma).createManualClaim(user);
+
+  assert.equal(claim.prompt.id, "prompt-5");
+  assert.equal(fixture.calls.creates[0].data.promptId, "prompt-5");
+});
+
+test("scheduled selection batches histories and applies the repeat window independently per user", async () => {
+  const now = new Date("2026-08-06T12:00:00.000Z");
+  const prompts = Array.from({ length: 7 }, (_, index) => ({
+    id: `prompt-${index + 1}`,
+    topic: `Topic ${index + 1}`,
+    audioFileId: null,
+  }));
+  const dueUsers = [
+    {
+      id: "user-1",
+      telegramId: 101n,
+      timezone: "Europe/Moscow",
+      dailyPromptHour: 13,
+      dailyPromptMinute: 0,
+    },
+    {
+      id: "user-2",
+      telegramId: 202n,
+      timezone: "Europe/Moscow",
+      dailyPromptHour: 13,
+      dailyPromptMinute: 0,
+    },
+  ];
+  const historyRows = [
+    ...Array.from({ length: 5 }, (_, index) => ({
+      userId: "user-1",
+      promptId: `prompt-${index + 1}`,
+    })),
+    ...["prompt-2", "prompt-3", "prompt-4", "prompt-5", "prompt-6"].map(
+      (promptId) => ({ userId: "user-2", promptId }),
+    ),
+  ];
+  const fixture = createClaimPrisma({ dueUsers, prompts, historyRows });
+  const originalRandom = Math.random;
+  Math.random = () => 0;
+
+  try {
+    const claims = await new ScheduleService(fixture.prisma).claimScheduledBatch(
+      2,
+      now,
+    );
+
+    assert.deepEqual(
+      claims.map(({ user, prompt }) => [user.id, prompt.id]),
+      [
+        ["user-1", "prompt-6"],
+        ["user-2", "prompt-1"],
+      ],
+    );
+    assert.equal(fixture.calls.historySql.length, 1);
+    assert.ok(fixture.calls.historyValues[0].includes("user-1"));
+    assert.ok(fixture.calls.historyValues[0].includes("user-2"));
+    assert.equal(fixture.calls.insertSql.length, 2);
+  } finally {
+    Math.random = originalRandom;
+  }
+});
 
 test("catch-up collapses downtime to one latest occurrence and two workers conflict on its stable key", async () => {
   const now = new Date("2024-01-05T12:00:00.000Z");

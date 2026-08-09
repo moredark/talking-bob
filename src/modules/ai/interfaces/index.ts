@@ -8,6 +8,7 @@ export {
   AgentTone,
   ILLMService,
   FeedbackResult,
+  SpeechAnalysisResult,
   ConversationMessage,
   LLM_SERVICE,
 } from "./llm.interface";

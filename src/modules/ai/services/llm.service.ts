@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { RUNTIME_CONFIG } from "../../../config/runtime-config.module";
 import { RuntimeConfig } from "../../../config/runtime.config";
 import {
@@ -8,7 +8,7 @@ import {
 import {
   AgentTone,
   ILLMService,
-  FeedbackResult,
+  SpeechAnalysisResult,
   ConversationMessage,
 } from "../interfaces";
 import {
@@ -16,6 +16,14 @@ import {
   AiRequestLimiterOverloadedError,
   AiRequestLimiterService,
 } from "./ai-request-limiter.service";
+import { ErrorLogService } from "../../error-log";
+
+class LlmProviderStatusError extends Error {
+  constructor(readonly statusCode: number) {
+    super("LLM provider rejected the request");
+    this.name = "LlmProviderStatusError";
+  }
+}
 
 const ANALYSIS_SCHEMA_PROMPT = `Return ONLY valid JSON:
 {
@@ -43,6 +51,7 @@ export class LLMService implements ILLMService {
   constructor(
     @Inject(RUNTIME_CONFIG) private readonly runtimeConfig: RuntimeConfig,
     private readonly requestLimiter: AiRequestLimiterService,
+    @Optional() private readonly errorLog?: ErrorLogService,
   ) {
     this.apiUrl = runtimeConfig.llm.apiUrl;
     this.model = runtimeConfig.llm.model;
@@ -55,7 +64,8 @@ export class LLMService implements ILLMService {
     topic: string,
     targetLanguage: string = "en",
     tone: AgentTone = "friendly",
-  ): Promise<FeedbackResult> {
+  ): Promise<SpeechAnalysisResult> {
+    const startedAt = Date.now();
     const systemPrompt = this.buildAnalysisSystemPrompt(tone);
 
     const userPrompt = `Topic: "${topic}"\nStudent: "${this.shortenText(transcript, 1800)}"\nAnalyze this English speech.`;
@@ -86,30 +96,26 @@ export class LLMService implements ILLMService {
 
         if (!response.ok) {
           this.logger.error(`LLM API returned status ${response.status}`);
-          throw new Error(`LLM API error: ${response.status}`);
+          throw new LlmProviderStatusError(response.status);
         }
 
         const data = await response.json();
         const content = this.extractMessageContent(data);
-        const finishReason = data.choices?.[0]?.finish_reason ?? "unknown";
-        const completionTokens = data?.usage?.completion_tokens ?? "unknown";
-
         if (content) {
           const feedback = this.parseJsonResponse(content);
-          this.logger.log(
-            `Analysis complete, score: ${feedback.overallScore}`,
-          );
+          this.logger.log("Analysis completed");
           return feedback;
         }
 
         this.logger.warn(
-          `Analysis response is empty on attempt ${index + 1}/${attempts.length}. finish_reason=${finishReason}, completion_tokens=${completionTokens}`,
+          `Analysis response is empty on attempt ${index + 1}/${attempts.length}`,
         );
       }
 
       return this.createFallbackFeedback(transcript);
     } catch (error) {
       this.logger.error(`Speech analysis failed (${this.errorKind(error)})`);
+      await this.captureFailure("analyze_speech", startedAt, error);
       if (this.mustPropagate(error)) throw error;
       return this.createFallbackFeedback(transcript);
     }
@@ -120,6 +126,7 @@ export class LLMService implements ILLMService {
     topic: string,
     tone: AgentTone = "friendly",
   ): Promise<string> {
+    const startedAt = Date.now();
     const recentHistory = conversationHistory
       .slice(-6)
       .map((msg) => ({
@@ -146,17 +153,13 @@ export class LLMService implements ILLMService {
 
       if (!response.ok) {
         this.logger.error(`LLM API returned status ${response.status}`);
-        throw new Error(`LLM API error: ${response.status}`);
+        throw new LlmProviderStatusError(response.status);
       }
 
       const data = await response.json();
       const content = this.extractMessageContent(data);
-      const completionTokens = data?.usage?.completion_tokens ?? "unknown";
-
       if (!content) {
-        this.logger.warn(
-          `Follow-up response is empty, using fallback. finish_reason=${data.choices?.[0]?.finish_reason ?? "unknown"}, completion_tokens=${completionTokens}`,
-        );
+        this.logger.warn("Follow-up response is empty, using fallback");
         return this.defaultFollowUp;
       }
 
@@ -165,6 +168,7 @@ export class LLMService implements ILLMService {
       this.logger.error(
         `Follow-up generation failed (${this.errorKind(error)})`,
       );
+      await this.captureFailure("generate_follow_up", startedAt, error);
       if (this.mustPropagate(error)) throw error;
       return this.defaultFollowUp;
     }
@@ -199,6 +203,24 @@ export class LLMService implements ILLMService {
       error instanceof AiRequestLimiterClosedError ||
       (error instanceof BoundedHttpError && error.code === "aborted")
     );
+  }
+
+  private async captureFailure(operation: string, startedAt: number, error: unknown): Promise<void> {
+    await this.errorLog?.capture({
+      type: "ai",
+      service: "llm",
+      operation,
+      latencyMs: Date.now() - startedAt,
+      statusCode: error instanceof LlmProviderStatusError ? error.statusCode : undefined,
+      retryable: this.isRetryable(error),
+      error,
+      code: error instanceof BoundedHttpError ? error.code : undefined,
+    });
+  }
+
+  private isRetryable(error: unknown): boolean {
+    if (error instanceof LlmProviderStatusError) return error.statusCode === 429 || error.statusCode >= 500;
+    return error instanceof BoundedHttpError && (error.code === "network" || error.code === "timeout");
   }
 
   private extractMessageContent(data: any): string | null {
@@ -276,13 +298,15 @@ Style rules for "friendly" tone:
 - Use calm teacher-like explanations`;
   }
 
-  private parseJsonResponse(content: string): FeedbackResult {
+  private parseJsonResponse(content: string): SpeechAnalysisResult {
     const cleanedContent = this.stripCodeFences(content);
 
     try {
       const parsedFromWhole = this.tryParseJson(cleanedContent);
-      if (parsedFromWhole) {
+      if (this.isValidAnalysisResponse(parsedFromWhole)) {
         return {
+          version: 1,
+          kind: "model",
           summary: this.normalizeSummary(parsedFromWhole.summary),
           improvementPoints: this.extractImprovementPoints(parsedFromWhole),
           overallScore: Math.min(
@@ -297,8 +321,10 @@ Style rules for "friendly" tone:
         ? this.tryParseJson(jsonCandidate)
         : null;
 
-      if (parsedFromCandidate) {
+      if (this.isValidAnalysisResponse(parsedFromCandidate)) {
         return {
+          version: 1,
+          kind: "model",
           summary: this.normalizeSummary(parsedFromCandidate.summary),
           improvementPoints: this.extractImprovementPoints(parsedFromCandidate),
           overallScore: Math.min(
@@ -316,9 +342,11 @@ Style rules for "friendly" tone:
       const extractedPoints = this.extractPointsFromText(cleanedContent);
 
       return {
+        version: 1,
+        kind: "fallback",
         summary:
           extractedSummary ||
-          "Не удалось корректно разобрать структурированный ответ модели. Ниже базовый разбор.",
+          "Ответ модели не удалось разобрать полностью. Показана доступная часть и базовая оценка.",
         improvementPoints: extractedPoints,
         overallScore: 5,
       };
@@ -437,6 +465,26 @@ Style rules for "friendly" tone:
     return this.normalizePoints(values);
   }
 
+  private isValidAnalysisResponse(value: any): boolean {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return false;
+    }
+
+    const hasSummary =
+      typeof value.summary === "string" && value.summary.trim().length > 0;
+    const hasValidScore =
+      typeof value.overallScore === "number" &&
+      Number.isInteger(value.overallScore) &&
+      value.overallScore >= 1 &&
+      value.overallScore <= 10;
+    const hasPointList =
+      Array.isArray(value.improvementPoints) ||
+      Array.isArray(value.grammarErrors) ||
+      Array.isArray(value.vocabularySuggestions);
+
+    return hasSummary && hasValidScore && hasPointList;
+  }
+
   private extractImprovementPoints(parsed: any): string[] {
     if (Array.isArray(parsed.improvementPoints)) {
       return this.normalizePoints(parsed.improvementPoints);
@@ -472,10 +520,12 @@ Style rules for "friendly" tone:
     return Array.from(unique);
   }
 
-  private createFallbackFeedback(transcript: string): FeedbackResult {
+  private createFallbackFeedback(transcript: string): SpeechAnalysisResult {
     return {
+      version: 1,
+      kind: "fallback",
       summary:
-        "Не удалось получить полный анализ от модели. Ниже базовая оценка, попробуйте запросить отчёт ещё раз позже.",
+        "Модель не предоставила полный анализ. Показана базовая автоматическая оценка ответа.",
       improvementPoints: [
         "Добавьте больше деталей: причина, пример, сравнение.",
         "Используйте связки: because, however, for example, in my opinion.",

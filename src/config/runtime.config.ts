@@ -29,6 +29,11 @@ export interface RuntimeConfig {
   shutdown: {
     drainTimeoutMs: number;
   };
+  retention: {
+    errorLogsDays: number;
+    rateLimitDays: number;
+    closedConversationContentDays: number;
+  };
   voice: {
     maxDurationSeconds: number;
     maxFileSizeBytes: number;
@@ -129,6 +134,16 @@ export function parseRuntimeConfig(
     min: 100,
     max: 10 * 60_000,
   });
+  const errorLogsDays = number("RETENTION_ERROR_LOGS_DAYS", {
+    defaultValue: 30, min: 1, max: 3650,
+  });
+  const rateLimitDays = number("RETENTION_RATE_LIMIT_DAYS", {
+    defaultValue: 30, min: 1, max: 3650,
+  });
+  const closedConversationContentDays = number(
+    "RETENTION_CLOSED_CONVERSATION_CONTENT_DAYS",
+    { defaultValue: 30, min: 1, max: 3650 },
+  );
   const analysisMaxTokens = number("LLM_ANALYSIS_MAX_TOKENS", {
     defaultValue: 2500,
     min: 64,
@@ -180,6 +195,7 @@ export function parseRuntimeConfig(
     },
     concurrency: { telegramUpdates, aiRequests, aiRequestMaxPending },
     shutdown: { drainTimeoutMs },
+    retention: { errorLogsDays, rateLimitDays, closedConversationContentDays },
     voice: { maxDurationSeconds, maxFileSizeBytes },
     externalRequests: {
       telegramFileDownload: requestLimits(

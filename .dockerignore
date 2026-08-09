@@ -1,5 +1,15 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
 node_modules
 dist
-.env
-.git
+coverage
+docs
+test
+testing
+integration
+scripts
 *.md
+npm-debug.log*

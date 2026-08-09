@@ -3,12 +3,20 @@
   "version": "1.0.0",
   "description": "Telegram bot for practicing spoken English",
   "main": "dist/main.js",
+  "engines": {
+    "node": "24.18.0"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/main.js",
     "start:dev": "tsc --watch & node --watch dist/main.js",
     "start:prod": "node dist/main.js",
     "test": "npm run build && node --test",
+    "test:ci": "npm test && npx prisma validate",
+    "test:smoke": "npm run build && node --test test/user-journey.test.js",
+    "test:postgres": "npm run build && node scripts/run-postgres-integration.js",
+    "test:container": "node scripts/verify-runtime-image.js",
+    "test:operations": "npm run build && node --test test/user-journey.test.js && node scripts/run-postgres-integration.js && node scripts/verify-runtime-image.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
@@ -37,7 +45,7 @@
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
     "@types/jsonwebtoken": "^9.0.10",
-    "@types/node": "^25.0.9",
+    "@types/node": "^24.0.0",
     "prisma": "^6.19.2",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
