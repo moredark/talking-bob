@@ -56,6 +56,11 @@ test("Tailscale deployment keeps the admin UI private and production-ready", () 
   assert.match(dockerfile, /NGINX_ENVSUBST_FILTER=\^PORT\$/);
   assert.match(
     dockerfile,
+    /RUN\s+mkdir\s+-p\s+\/tmp\/nginx\/conf\.d\s+&&\s+chown\s+-R\s+nginx:nginx\s+\/tmp\/nginx/,
+    "the unprivileged nginx user must own the envsubst output directory",
+  );
+  assert.match(
+    dockerfile,
     /COPY\s+--from=build(?:\s+--chown=nginx:nginx)?\s+\/usr\/src\/admin\/dist\s+\/usr\/share\/nginx\/html/,
   );
   assert.match(dockerfile, /^USER\s+nginx\s*$/m);

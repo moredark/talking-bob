@@ -16,6 +16,7 @@ ENV NGINX_ENVSUBST_FILTER=^PORT$ \
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY default.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build --chown=nginx:nginx /usr/src/admin/dist /usr/share/nginx/html
+RUN mkdir -p /tmp/nginx/conf.d && chown -R nginx:nginx /tmp/nginx
 USER nginx
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
