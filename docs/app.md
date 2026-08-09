@@ -216,6 +216,7 @@ pair is consumed only by `npm run prisma:seed` / `npm run deploy:init`.
 
 ## Related documentation
 
+- [Architecture guide](architecture/README.md)
 - [Database contract](database.md)
 - [Backend operations and recovery](operations.md)
 - [Deployment plan](DEPLOYMENT_PLAN.md) — a forward-looking checklist, not a

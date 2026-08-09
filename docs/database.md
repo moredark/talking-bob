@@ -362,3 +362,10 @@ Production deployment должен делать backup и выполнять
 `npm run prisma:migrate:deploy` (или `npm run deploy:init`, который затем запускает
 идемпотентный seed). Нельзя заменять цепочку миграций одним `prisma db push`:
 иначе будут потеряны partial index, CHECK constraints, triggers и backfill.
+
+## Связанная документация
+
+- [Архитектурная карта данных и состояний](architecture/05-data-and-state.md)
+- [Архитектурный индекс](architecture/README.md)
+- [Application contract](app.md)
+- [Operations runbook](operations.md)

@@ -62,6 +62,7 @@ The bot uses the standard Telegram Bot API through grammY. Built-in questions ar
 
 ## Documentation
 
+- [Architecture guide and recommended reader order](docs/architecture/README.md)
 - [Application behavior and runtime contracts](docs/app.md)
 - [Database schema and invariants](docs/database.md)
 - [Backend operations and recovery runbook](docs/operations.md)

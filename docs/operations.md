@@ -195,3 +195,10 @@ Compose constructs its internal PostgreSQL URL from `POSTGRES_USER`,
 `POSTGRES_PASSWORD`, and `POSTGRES_DB`. Their values must use URI-unreserved
 characters (`A-Z`, `a-z`, `0-9`, `.`, `_`, `~`, `-`); otherwise provide an
 equivalently encoded deployment configuration before rollout.
+
+## Related documentation
+
+- [Architecture guide](architecture/README.md)
+- [Admin and operations architecture](architecture/06-admin-and-operations.md)
+- [Application contract](app.md)
+- [Database contract](database.md)
