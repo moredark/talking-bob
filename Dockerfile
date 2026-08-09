@@ -6,11 +6,12 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 FROM dependencies AS build
-COPY tsconfig.json ./
+COPY tsconfig.json tsconfig.seed.json ./
 COPY prisma ./prisma
 COPY src ./src
 RUN npm run prisma:generate \
-    && npm run build
+    && npm run build \
+    && npm run build:seed
 
 FROM ${NODE_IMAGE} AS production-dependencies
 WORKDIR /usr/src/app
@@ -32,7 +33,9 @@ CMD ["node", "dist/main.js"]
 FROM dependencies AS init
 ENV NODE_ENV=production
 WORKDIR /usr/src/app
+COPY --chown=node:node tsconfig.json tsconfig.seed.json ./
 COPY --chown=node:node prisma ./prisma
 COPY --from=build --chown=node:node /usr/src/app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=build --chown=node:node /usr/src/app/dist-seed ./dist-seed
 USER node
 CMD ["npm", "run", "deploy:init"]

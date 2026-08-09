@@ -26,10 +26,11 @@ flowchart TD
 ## Владение зависимостями
 
 - `DatabaseModule` глобально предоставляет `PrismaService`; доменные модули работают с БД через этот provider.
-- `TelegramModule` владеет `TelegramService` и обработчиками `/start`, voice,
-  report и settings. Handlers находятся на транспортной границе, но фактически
-  являются application orchestrators: связывают несколько сервисов и Telegram
-  I/O. Атомарные state transitions остаются в профильных сервисах.
+- `TelegramModule` владеет `TelegramService`, обработчиками `/start`, voice,
+  report и settings, а также общим `ReportWorkflowService`. Handlers принимают
+  transport-событие и выполняют admission; общий auto/manual report workflow
+  не дублируется между ними. Атомарные state transitions остаются в профильных
+  сервисах.
 - `ScheduleModule` входит в Telegram-контур: dispatcher получает активный экземпляр grammY-бота от `TelegramService`.
 - `HealthModule` читает состояние `TelegramService` для readiness, но не владеет жизненным циклом бота.
 - `AuthModule` предоставляет guard и auth-сервис; `AdminModule` использует их для защищённого административного API.
@@ -75,6 +76,30 @@ scripts/                    operations/container/PostgreSQL gates
 должен импортировать эту поверхность или injection token, а не внутренний
 конкретный provider без необходимости.
 
+## Фасады сложных lifecycle-сервисов
+
+`ScheduleService` и `ResponseService` остаются стабильными Nest providers и
+публичными точками входа модулей, но не содержат все переходы состояния в одном
+файле. Каждый фасад создаёт внутренние undecorated operations с тем же
+`PrismaService` и делегирует им целые сценарии:
+
+```text
+ScheduleService
+├── ScheduleSettingsOperations  normalization, repair, user settings
+├── ScheduleClaimsOperations    manual/scheduled prompt claims и selection
+└── ScheduleDeliveryOperations  attempt/success/failure transitions
+
+ResponseService
+├── ResponseGenerationOperations generation claim/complete/fail
+├── ResponseDeliveryOperations   report request и chunk delivery lifecycle
+└── ResponseCrudOperations       совместимый небольшой CRUD API
+```
+
+Operations не регистрируются как отдельные Nest providers и не экспортируются
+из module barrel. Это сохраняет один публичный API и простой constructor для
+тестов. Транзакция и все связанные row locks должны целиком оставаться внутри
+одной operation: фасад не разбивает атомарный transition на несколько вызовов.
+
 ## Граница AI
 
 Потребители зависят от интерфейсов и symbol-токенов `WHISPER_SERVICE` и `LLM_SERVICE`, а не от конкретных Cloud.ru классов. `AiModule` связывает эти токены с `WhisperService` и `LLMService` и предоставляет общий `AiRequestLimiterService`.
@@ -83,13 +108,15 @@ scripts/                    operations/container/PostgreSQL gates
 flowchart LR
     handlers[Telegram handlers] --> wt[WHISPER_SERVICE]
     handlers --> lt[LLM_SERVICE]
+    workflow[ReportWorkflowService] --> lt
     wt --> whisper[WhisperService]
     lt --> llm[LLMService]
     whisper --> cloud[Cloud.ru API]
     llm --> cloud
 ```
 
-Такой контракт сохраняет возможность заменить реализации провайдера без изменения обработчиков.
+Такой контракт сохраняет возможность заменить реализации провайдера без
+изменения обработчиков и report workflow.
 
 ## Жизненный цикл процесса
 

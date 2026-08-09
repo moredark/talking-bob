@@ -8,10 +8,11 @@
   },
   "scripts": {
     "build": "tsc",
+    "build:seed": "tsc -p tsconfig.seed.json",
     "start": "node dist/main.js",
     "start:dev": "tsc --watch & node --watch dist/main.js",
     "start:prod": "node dist/main.js",
-    "test": "npm run build && node --test",
+    "test": "npm run build && npm run build:seed && node --test",
     "test:ci": "npm test && npx prisma validate",
     "test:smoke": "npm run build && node --test test/user-journey.test.js",
     "test:postgres": "npm run build && node scripts/run-postgres-integration.js",
@@ -21,7 +22,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:seed": "ts-node prisma/seed.ts",
-    "deploy:init": "npm run prisma:migrate:deploy && npm run prisma:seed"
+    "deploy:init": "npm run prisma:migrate:deploy && npm run build:seed && node dist-seed/seed.js"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

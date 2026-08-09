@@ -23,13 +23,15 @@ Updates одного чата проходят последовательно; �
 | --- | --- | --- |
 | `/start` | `StartHandler` | User, Prompt, RateLimit, Schedule, Dispatcher |
 | `new_question` | `StartHandler.handleNewQuestion` | тот же flow без welcome |
-| voice message | `VoiceHandler` | User, Prompt, Conversation, RateLimit, Whisper, LLM, Report |
-| `/report`, `report` callback | `ReportHandler` | Conversation, Response, LLM, Telegram delivery |
+| voice message | `VoiceHandler` | User, Prompt, Conversation, RateLimit, Whisper, LLM, ReportWorkflow |
+| `/report`, `report` callback | `ReportHandler` | Admission, Response claim, ReportWorkflow |
 | `/settings` и settings callbacks | `SettingsHandler` | User, Schedule |
 
-Handlers сейчас являются application orchestrators: они связывают сервисы и
-Telegram I/O. Доменные переходы, требующие атомарности, находятся в сервисах, а
-не должны собираться из отдельных Prisma-запросов внутри handler.
+Handlers связывают Telegram update с application-сценарием. Общая для auto и
+manual report логика вынесена в `ReportWorkflowService`: генерация, подготовка
+сохранённого отчёта и durable chunk delivery не принадлежат transport-handler.
+Доменные переходы, требующие атомарности, находятся в профильных сервисах, а не
+собираются из отдельных Prisma-запросов внутри handler или workflow.
 
 ## Новый вопрос
 
@@ -96,7 +98,7 @@ sequenceDiagram
     participant C as ConversationService
     participant W as Whisper
     participant L as LLM
-    participant R as ReportHandler
+    participant R as ReportWorkflowService
     participant DB as PostgreSQL
     participant TG as Telegram API
 
@@ -117,6 +119,13 @@ sequenceDiagram
 ```
 
 ## Генерация и доставка отчёта
+
+`ReportHandler` отвечает за admission ручного `/report` и отображение ранних
+outcomes (`no_messages`, `busy`, retention). Generation claim или сохранённый
+`UserResponse` он передаёт в `ReportWorkflowService`; delivery claim для
+сохранённого ответа workflow получает сам. Для автоматического отчёта третьего
+turn `VoiceHandler` вызывает тот же workflow напрямую; handler-to-handler
+зависимости нет.
 
 `UserResponse` — durable owner генерации. Автоматический owner создаётся внутри
 транзакции принятия третьего turn; manual `/report` захватывает или reclaim-ит

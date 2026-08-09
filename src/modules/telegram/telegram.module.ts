@@ -13,6 +13,7 @@ import { ConversationModule } from "../conversation";
 import { RateLimitModule } from "../rate-limit";
 import { AiModule } from "../ai";
 import { ScheduleModule } from "../schedule";
+import { ReportWorkflowService } from "./report-workflow.service";
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { ScheduleModule } from "../schedule";
     StartHandler,
     VoiceHandler,
     ReportHandler,
+    ReportWorkflowService,
     SettingsHandler,
   ],
   exports: [TelegramService],

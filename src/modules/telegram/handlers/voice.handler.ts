@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, Optional, forwardRef } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { Context, InlineKeyboard } from "grammy";
 import { RUNTIME_CONFIG } from "../../../config/runtime-config.module";
 import { RuntimeConfig } from "../../../config/runtime.config";
@@ -11,7 +11,7 @@ import {
   WHISPER_SERVICE, IWhisperService, LLM_SERVICE, ILLMService,
   ConversationMessage, AgentTone,
 } from "../../ai";
-import { ReportHandler } from "./report.handler";
+import { ReportWorkflowService } from "../report-workflow.service";
 import { ErrorLogService, ObservabilityContextService } from "../../error-log";
 
 type VoiceProcessingStage =
@@ -34,7 +34,7 @@ export class VoiceHandler {
     private readonly rateLimitService: RateLimitService,
     @Inject(WHISPER_SERVICE) private readonly whisperService: IWhisperService,
     @Inject(LLM_SERVICE) private readonly llmService: ILLMService,
-    @Inject(forwardRef(() => ReportHandler)) private readonly reportHandler: ReportHandler,
+    private readonly reportWorkflow: ReportWorkflowService,
     @Inject(RUNTIME_CONFIG) private readonly runtimeConfig: RuntimeConfig,
     @Optional() private readonly errorLog?: ErrorLogService,
     @Optional() private readonly observability?: ObservabilityContextService,
@@ -92,7 +92,7 @@ export class VoiceHandler {
       if (accepted.outcome === "closed") { await this.replyConversationClosed(ctx); return; }
       if (accepted.generationClaim) {
         stage = "report_generate";
-        await this.reportHandler.generateClaimedReport(
+        await this.reportWorkflow.generateClaimedReport(
           ctx, userPrompt.id, topic, tone, accepted.generationClaim,
         );
         return;
