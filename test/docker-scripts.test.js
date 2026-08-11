@@ -83,3 +83,46 @@ test("local Docker helpers stay non-destructive, portable, and local-only", asyn
     "docker:init must seed without running migrations again",
   );
 });
+
+test("operations gate includes backend, Admin SPA, PostgreSQL and both production images", async () => {
+  const scripts = await readScripts();
+
+  assert.equal(
+    scripts["test:admin"],
+    "npm --prefix admin test && npm --prefix admin run build",
+  );
+  assert.equal(
+    scripts["test:admin-container"],
+    "node scripts/verify-admin-image.js",
+  );
+  assert.equal(
+    scripts["test:container"],
+    "node scripts/verify-runtime-image.js && node scripts/verify-admin-image.js",
+  );
+  assert.equal(
+    scripts["test:operations"],
+    "npm run build && npm run test:admin && node --test test/user-journey.test.js && node scripts/run-postgres-integration.js && npm run test:container",
+  );
+
+  const verifier = await readFile(
+    path.resolve(__dirname, "..", "scripts", "verify-admin-image.js"),
+    "utf8",
+  );
+  assert.match(verifier, /--target", "runtime"/);
+  assert.match(verifier, /talking-bob\.admin-image-check/);
+  assert.match(verifier, /ownedContainerExists/);
+  assert.match(verifier, /ownedImageExists/);
+  assert.match(verifier, /refusing to manage an unowned container/);
+  assert.match(verifier, /refusing to manage an unowned image/);
+  assert.match(verifier, /docker\(\["rm", "--force", containerName\]/);
+  assert.match(verifier, /docker\(\["image", "rm", tag\]/);
+  assert.match(verifier, /127\.0\.0\.1:8080\/healthz/);
+  assert.match(verifier, /identity\.stdout\.trim\(\), "0"/);
+  assert.match(verifier, /127\.0\.0\.1:8080\/broadcasts\/new/);
+  assert.match(verifier, /deepLink\.stdout, root\.stdout/);
+  assert.match(verifier, /network", "create"/);
+  assert.match(verifier, /owned-upstream/);
+  assert.match(verifier, /127\.0\.0\.1:8080\/api\/rollout-probe/);
+  assert.match(verifier, /JSON\.parse\(proxied\.stdout\)/);
+  assert.match(verifier, /network", "rm", networkName/);
+});

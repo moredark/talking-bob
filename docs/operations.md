@@ -202,3 +202,57 @@ equivalently encoded deployment configuration before rollout.
 - [Admin and operations architecture](architecture/06-admin-and-operations.md)
 - [Application contract](app.md)
 - [Database contract](database.md)
+
+## Admin MVP release gate
+
+Локальный gate Admin MVP не заменяет staging. Перед созданием release artifacts:
+
+```bash
+npm run test:ci
+npm run test:postgres
+npm run test:operations
+npm --prefix admin test
+npm --prefix admin run build
+npm run docker:config
+npm run docker:build
+```
+
+`test:postgres` применяет 18 миграций до
+`20260810160000_admin_analytics_facts`, проверяет upgrade fixtures,
+Admin MVP retention/restart/claim invariants и custom-format backup/restore.
+`test:container` проверяет backend runtime/init и отдельный Admin image:
+non-root nginx, `/healthz`, SPA deep links и same-origin `/api` proxy.
+
+Перед schema rollout остановите writers и создайте проверенный backup. Prisma
+down migrations автоматически не выполняются: для совместимой ошибки откатите
+runtime image и исправляйте схему roll-forward; для несовместимой — остановите
+writers и восстановите backup в отдельную проверенную БД.
+
+Staging smoke выполняется выделенными admin, bot и users:
+
+1. Записать commit, три image digests, latest migration и UTC-время.
+2. Проверить login, истёкший JWT, audit/session detail и отсутствие raw данных в
+   list/audit/log payload.
+3. Применить и сбросить безопасный hot override; restart-required override
+   проверить после controlled restart.
+4. Создать broadcast только для opted-in test users; opt-out fixture не должен
+   попасть в snapshot. Перезапуск/reclaim не должен дать duplicate delivery.
+5. Сверить analytics с fixtures и проверить явное предупреждение о неполном
+   историческом покрытии после upgrade.
+6. Проверить `/start`, `/settings`, voice/report flow, readiness и Tailscale
+   deep links.
+
+Не переводите rollout gate в `done` без записанного live evidence.
+
+Для post-deploy monitoring используйте безопасные агрегаты:
+
+```sql
+SELECT status, count(*) FROM broadcasts
+WHERE status IN ('queued', 'processing') GROUP BY status;
+
+SELECT status, count(*) FROM broadcast_recipients
+WHERE "updatedAt" >= now() - interval '15 minutes' GROUP BY status;
+
+SELECT outcome, count(*) FROM ai_provider_calls
+WHERE "createdAt" >= now() - interval '15 minutes' GROUP BY outcome;
+```

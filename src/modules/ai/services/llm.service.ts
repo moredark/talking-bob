@@ -5,6 +5,7 @@ import {
   boundedFetch,
   BoundedHttpError,
 } from "../../../infrastructure/http";
+import { RuntimeSettingsService } from "../../../config/runtime-settings.service";
 import {
   AgentTone,
   ILLMService,
@@ -17,6 +18,7 @@ import {
   AiRequestLimiterService,
 } from "./ai-request-limiter.service";
 import { ErrorLogService } from "../../error-log";
+import { AiProviderTraceContext, AiProviderTraceWriter } from "./ai-provider-trace-writer.service";
 
 class LlmProviderStatusError extends Error {
   constructor(readonly statusCode: number) {
@@ -42,6 +44,7 @@ Rules:
 export class LLMService implements ILLMService {
   private readonly logger = new Logger(LLMService.name);
   private readonly apiUrl: string;
+  @Inject(RuntimeSettingsService) private readonly settings!: RuntimeSettingsService;
   private readonly model: string;
   private readonly analysisMaxTokens: number;
   private readonly followUpMaxTokens: number;
@@ -52,6 +55,7 @@ export class LLMService implements ILLMService {
     @Inject(RUNTIME_CONFIG) private readonly runtimeConfig: RuntimeConfig,
     private readonly requestLimiter: AiRequestLimiterService,
     @Optional() private readonly errorLog?: ErrorLogService,
+    @Optional() private readonly traceWriter?: AiProviderTraceWriter,
   ) {
     this.apiUrl = runtimeConfig.llm.apiUrl;
     this.model = runtimeConfig.llm.model;
@@ -64,8 +68,10 @@ export class LLMService implements ILLMService {
     topic: string,
     targetLanguage: string = "en",
     tone: AgentTone = "friendly",
+    trace?: AiProviderTraceContext,
   ): Promise<SpeechAnalysisResult> {
     const startedAt = Date.now();
+    const analysisMaxTokens = this.settings.productNumber("LLM_ANALYSIS_MAX_TOKENS");
     const systemPrompt = this.buildAnalysisSystemPrompt(tone);
 
     const userPrompt = `Topic: "${topic}"\nStudent: "${this.shortenText(transcript, 1800)}"\nAnalyze this English speech.`;
@@ -77,30 +83,22 @@ export class LLMService implements ILLMService {
 
     try {
       const attempts = [
-        { temperature: 0.5, maxTokens: this.analysisMaxTokens },
+        { temperature: 0.5, maxTokens: analysisMaxTokens },
         {
           temperature: 0.3,
-          maxTokens: Math.min(32_000, this.analysisMaxTokens + 500),
+          maxTokens: Math.min(32_000, analysisMaxTokens + 500),
         },
       ];
 
       for (let index = 0; index < attempts.length; index += 1) {
         const attempt = attempts[index];
-        const response = await this.requestCompletion({
+        const { content } = await this.requestTracedCompletion({
           messages,
           temperature: attempt.temperature,
           top_p: 0.95,
           presence_penalty: 0,
           max_tokens: attempt.maxTokens,
-        });
-
-        if (!response.ok) {
-          this.logger.error(`LLM API returned status ${response.status}`);
-          throw new LlmProviderStatusError(response.status);
-        }
-
-        const data = await response.json();
-        const content = this.extractMessageContent(data);
+        }, "analysis", index + 1, trace);
         if (content) {
           const feedback = this.parseJsonResponse(content);
           this.logger.log("Analysis completed");
@@ -125,6 +123,7 @@ export class LLMService implements ILLMService {
     conversationHistory: ConversationMessage[],
     topic: string,
     tone: AgentTone = "friendly",
+    trace?: AiProviderTraceContext,
   ): Promise<string> {
     const startedAt = Date.now();
     const recentHistory = conversationHistory
@@ -143,21 +142,13 @@ export class LLMService implements ILLMService {
     ];
 
     try {
-      const response = await this.requestCompletion({
+      const { content } = await this.requestTracedCompletion({
         messages,
         temperature: 0.5,
         top_p: 0.95,
         presence_penalty: 0,
-        max_tokens: this.followUpMaxTokens,
-      });
-
-      if (!response.ok) {
-        this.logger.error(`LLM API returned status ${response.status}`);
-        throw new LlmProviderStatusError(response.status);
-      }
-
-      const data = await response.json();
-      const content = this.extractMessageContent(data);
+        max_tokens: this.settings.productNumber("LLM_FOLLOWUP_MAX_TOKENS"),
+      }, "follow_up", 1, trace);
       if (!content) {
         this.logger.warn("Follow-up response is empty, using fallback");
         return this.defaultFollowUp;
@@ -174,9 +165,51 @@ export class LLMService implements ILLMService {
     }
   }
 
+  private async requestTracedCompletion(
+    payload: Record<string, unknown>,
+    operation: "follow_up" | "analysis",
+    attempt: number,
+    trace?: AiProviderTraceContext,
+  ): Promise<{ content: string | null }> {
+    const startedAt = Date.now();
+    let recorded = false;
+    try {
+      const response = await this.requestCompletion(payload);
+      if (!response.ok) {
+        if (trace) this.traceWriter?.write({
+          ...trace, operation, provider: "cloud.ru", model: this.model, attempt,
+          outcome: "failed", statusCode: response.status,
+          latencyMs: Date.now() - startedAt, failureCode: `http_${response.status}`,
+        });
+        recorded = true;
+        throw new LlmProviderStatusError(response.status);
+      }
+      const data = await response.json();
+      const content = this.extractMessageContent(data);
+      if (trace) this.traceWriter?.write({
+        ...trace, operation, provider: "cloud.ru", model: this.model, attempt,
+        outcome: content ? "succeeded" : "empty", statusCode: response.status,
+        latencyMs: Date.now() - startedAt,
+        inputTokens: data?.usage?.prompt_tokens,
+        outputTokens: data?.usage?.completion_tokens,
+        totalTokens: data?.usage?.total_tokens,
+        responseContent: content ?? undefined,
+      });
+      return { content };
+    } catch (error) {
+      if (trace && !recorded) this.traceWriter?.write({
+        ...trace, operation, provider: "cloud.ru", model: this.model, attempt,
+        outcome: "failed", latencyMs: Date.now() - startedAt,
+        failureCode: this.errorKind(error),
+      });
+      throw error;
+    }
+  }
+
   private requestCompletion(
     payload: Record<string, unknown>,
   ): Promise<Response> {
+
     return this.requestLimiter.run((signal) =>
       boundedFetch(this.apiUrl, {
         method: "POST",

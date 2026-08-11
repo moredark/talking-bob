@@ -98,3 +98,25 @@
 - [ ] Где хранить резервные копии и какой срок хранения требуется?
 - [ ] Должна ли admin-панель быть публичной, ограниченной по IP или доступной только через VPN?
 - [ ] Когда и из какого источника добавлять Telegram `audioFileId` к уже работающим текстовым prompts?
+
+## 10. Admin MVP rollout gate
+
+- [ ] Выполнить `npm run test:ci`, `npm run test:postgres`,
+  `npm run test:operations`, `npm --prefix admin test`,
+  `npm --prefix admin run build`, `npm run docker:config` и
+  `npm run docker:build`.
+- [ ] Убедиться, что latest migration —
+  `20260810160000_admin_analytics_facts` (18 migrations), и проверить backup
+  через restore в отдельную БД.
+- [ ] Опубликовать immutable backend runtime/init и Admin image digests.
+- [ ] Проверить Admin image как non-root nginx: `/healthz`, deep-link fallback
+  и same-origin `/api`.
+- [ ] В staging проверить login/expired JWT, audit/session privacy,
+  runtime override/reset, analytics coverage и одну ограниченную broadcast
+  кампанию только для opted-in test users.
+- [ ] Выполнить controlled app restart во время scheduled test broadcast и
+  подтвердить отсутствие duplicate delivery.
+- [ ] Записать commit, image digests, migration, UTC-время, smoke results и
+  monitoring evidence.
+
+До выполнения live staging пунктов Task07 остаётся `in-progress`.

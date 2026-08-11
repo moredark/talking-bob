@@ -83,7 +83,7 @@ export class ResponseGenerationOperations {
           });
       return {
         outcome: "claimed",
-        claim: { responseId: response.id, claimToken, claimExpiresAt },
+        claim: { responseId: response.id, userId: data.userId, userPromptId: data.userPromptId, claimToken, claimExpiresAt },
       };
     });
   }
@@ -111,6 +111,7 @@ export class ResponseGenerationOperations {
           generatedAt: new Date(),
           analysisVersion: data.analysisVersion,
           analysisKind: data.analysisKind,
+          overallScore: this.normalizedScore(data.analysisKind, data.overallScore),
           generationClaimToken: null,
           generationClaimExpiresAt: null,
           lastGenerationErrorCode: null,
@@ -158,6 +159,11 @@ export class ResponseGenerationOperations {
       },
     });
     return result.count === 1;
+  }
+
+  private normalizedScore(kind: CompleteGenerationData["analysisKind"], value: number | null): number | null {
+    if (kind !== "model" && kind !== "legacy") return null;
+    return typeof value === "number" && Number.isFinite(value) && value >= 1 && value <= 10 ? value : null;
   }
 
   private sanitizeErrorCode(value: string): string {

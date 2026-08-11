@@ -1,3 +1,4 @@
+import { AiProviderTraceContext } from "../services/ai-provider-trace-writer.service";
 export type AgentTone = "friendly" | "playful";
 
 export interface FeedbackResult {
@@ -22,12 +23,14 @@ export interface ILLMService {
     topic: string,
     targetLanguage?: string,
     tone?: AgentTone,
+    trace?: AiProviderTraceContext,
   ): Promise<SpeechAnalysisResult>;
 
   generateFollowUp(
     conversationHistory: ConversationMessage[],
     topic: string,
     tone?: AgentTone,
+    trace?: AiProviderTraceContext,
   ): Promise<string>;
 }
 

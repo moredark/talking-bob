@@ -35,12 +35,18 @@ export class ReportWorkflowService {
     const transcript = messages.filter((m) => m.role === "user").map((m) => m.content).join(" ");
     let deliveryClaim: DeliveryClaim | null = null;
     try {
-      const feedback = await this.llmService.analyzeSpeech(transcript, topic, "en", tone);
+      const feedback = await this.llmService.analyzeSpeech(transcript, topic, "en", tone, claim.userId ? {
+        userId: claim.userId, userPromptId: claim.userPromptId ?? userPromptId,
+        userResponseId: claim.responseId, requestId: claim.responseId,
+        correlationId: this.observability?.current()?.correlationId,
+      } : undefined);
       const chunks = chunkReportOutput(formatReportOutput(feedback, transcript));
       const completed = await this.responseService.completeGeneration({
         responseId: claim.responseId, claimToken: claim.claimToken, transcript,
         analysis: JSON.stringify(feedback), analysisVersion: feedback.version,
-        analysisKind: feedback.kind, chunks,
+        analysisKind: feedback.kind,
+        overallScore: feedback.kind === "model" ? feedback.overallScore : null,
+        chunks,
       });
       if (completed.outcome === "claimed") deliveryClaim = completed.claim;
     } catch (error) {

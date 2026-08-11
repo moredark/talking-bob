@@ -1,10 +1,11 @@
 # Database contract
 
-Актуально на **2026-08-08**. Документ сверён с `prisma/schema.prisma` и
-миграциями по `20260808180000_prompt_selection_history` включительно.
+Актуально на **2026-08-10**. Документ сверён с `prisma/schema.prisma` и
+миграциями по `20260810160000_admin_analytics_facts` включительно.
 
 Здесь описана база bot/backend. `AdminUser` намеренно не включён: это отдельный
-контур администрирования, а не часть runtime-контракта бота.
+контур аутентификации. Append-only `AdminAuditLog` включён, поскольку его
+атомарность, sanitization и retention являются backend-инвариантами.
 
 ## Общие соглашения
 
@@ -40,6 +41,8 @@
 | `telegramId` | `BIGINT` | нет | Telegram user id; unique |
 | `username` | `TEXT` | да | Telegram username |
 | `dailyPromptEnabled` | `BOOLEAN` | нет | `true` |
+| `announcementEnabled` | `BOOLEAN` | нет | `true`; отдельное согласие на анонсы |
+| `lastUserMessageAt` | `TIMESTAMPTZ(3)` | да | Последняя принятая user-реплика; несекретный activity fact |
 | `dailyPromptHour` | `INTEGER` | нет | `13` |
 | `dailyPromptMinute` | `INTEGER` | нет | `0` |
 | `timezone` | `TEXT` | нет | `Europe/Moscow` |
@@ -53,7 +56,7 @@
 | `createdAt` | `TIMESTAMPTZ(3)` | нет | `CURRENT_TIMESTAMP` |
 | `updatedAt` | `TIMESTAMPTZ(3)` | нет | Prisma `@updatedAt` |
 
-Ключи и индексы: PK `id`; unique `telegramId`; index `nextPromptAt`.
+Ключи и индексы: PK `id`; unique `telegramId`; indexes `nextPromptAt` и `lastUserMessageAt`.
 
 Связи: один пользователь имеет много `UserPrompt`, `UserResponse`,
 `UserRequest` и `QuotaWindow`.
@@ -102,6 +105,7 @@ SQL-миграция добавила колонку с default без `NOT NULL
 | `lastDeliveryErrorAt` | `TIMESTAMPTZ(3)` | да | Время кода ошибки |
 | `conversationStatus` | `ConversationStatus` | нет | `open` |
 | `conversationClosedAt` | `TIMESTAMPTZ(3)` | да | Время атомарного закрытия диалога |
+| `firstUserMessageAt` | `TIMESTAMPTZ(3)` | да | Первая принятая user-реплика; сохраняется после content purge |
 
 Ключи и Prisma-индексы:
 
@@ -113,7 +117,9 @@ SQL-миграция добавила колонку с default без `NOT NULL
 - `deliveryStatus, deliveryAttemptedAt, claimExpiresAt`
   (`user_prompts_delivery_retry_idx`);
 - `conversationStatus, conversationClosedAt`;
-- `scheduledOccurrenceKey`.
+- `scheduledOccurrenceKey`;
+- `sentAt`;
+- `firstUserMessageAt`.
 
 SQL-only partial unique index
 `user_prompts_scheduledOccurrenceKey_unique` обеспечивает уникальность
@@ -122,6 +128,15 @@ occurrence идемпотентен, а ручные prompt instances не ог�
 
 Связи: принадлежит `User` и `Prompt`; имеет много `ConversationMessage` и не
 более одного `UserResponse` (unique на `user_responses.userPromptId`).
+
+### `user_activity_days` (`UserActivityDay`)
+
+Несекретный Moscow-calendar activity fact: composite PK `userId, localDate`,
+`firstActivityAt`, `lastActivityAt` и положительный `messageCount`. CHECK
+гарантирует, что оба instant принадлежат `localDate` в `Europe/Moscow`. Index
+`localDate, userId` обслуживает bounded daily/retention analytics. Строка
+upsert-ится в той же транзакции, где принимается user message, не содержит
+текст, voice id или Telegram update id и удаляется cascade при удалении user.
 
 ### `conversation_messages` (`ConversationMessage`)
 
@@ -159,6 +174,8 @@ occurrence идемпотентен, а ручные prompt instances не ог�
 | `lastGenerationErrorAt` | `TIMESTAMPTZ(3)` | да | Время ошибки |
 | `analysisVersion` | `INTEGER` | да | Версия persisted report contract |
 | `analysisKind` | `ReportAnalysisKind` | да | `model`, `fallback` или `legacy` |
+| `overallScore` | `DOUBLE PRECISION` | да | Валидная top-level оценка 1..10 для model/legacy; сохраняется после content purge |
+| `reportDeliveredAt` | `TIMESTAMPTZ(3)` | да | Последняя подтверждённая полная доставка отчёта |
 | `sensitiveDataPurgedAt` | `TIMESTAMPTZ(3)` | да | Маркер необратимой очистки content |
 | `createdAt` | `TIMESTAMPTZ(3)` | нет | `CURRENT_TIMESTAMP` |
 
@@ -242,6 +259,29 @@ windowEnd`; indexes `userId, action, windowEnd` и `windowEnd`.
 
 Ключи и индексы: PK `id`; indexes `type`, `service`, `createdAt`,
 `correlationId, createdAt` и `service, operation, createdAt`.
+
+### `admin_audit_logs` (`AdminAuditLog`)
+
+| Поле | PostgreSQL | Null | Назначение |
+|---|---|---:|---|
+| `id` | `TEXT` | нет | Prisma `uuid()`; PK |
+| `actorId` | `VARCHAR(160)` | нет | Safe admin actor id snapshot |
+| `actorUsername` | `TEXT` | нет | Username snapshot |
+| `action` | `VARCHAR(80)` | нет | Шесть allowlisted mutation actions |
+| `entityType` | `VARCHAR(80)` | нет | `user`, `prompt`, `error_log` |
+| `entityId` | `VARCHAR(160)` | да | Target identifier; обязателен для success |
+| `outcome` | `VARCHAR(16)` | нет | `success` или `failure` |
+| `requestId` | `VARCHAR(160)` | нет | Safe request identifier |
+| `correlationId` | `VARCHAR(160)` | нет | Safe correlation identifier |
+| `before` / `after` | `JSONB` | да | Только action-specific allowlisted metadata |
+| `failureCode` | `VARCHAR(80)` | да | Обязательный allowlisted code для failure |
+| `createdAt` | `TIMESTAMPTZ(3)` | нет | `CURRENT_TIMESTAMP` |
+
+Таблица append-only на уровне Admin API. Индексы имеют стабильный suffix
+`createdAt DESC, id DESC`: общий, по actor, entity, action и outcome. SQL CHECK
+ограничивает identifiers, action/entity compatibility, outcomes/failure codes
+и форму success/failure row. Actor id намеренно не FK: запись сохраняет snapshot
+даже после изменения auth-контура.
 
 ## SQL-инварианты, которых нет в Prisma DSL
 
@@ -329,11 +369,26 @@ Cleanup запускается ежедневно в 03:30 по runtime clock и
   `voiceFileId`, `transcript`, `analysis` и ставится `sensitiveDataPurgedAt`.
   Conversation/report generation lifecycle и prompt-delivery provenance
   сохраняются, но lifecycle отдельных удалённых delivery requests — нет.
+  Несекретные `firstUserMessageAt`, `user_activity_days`, `overallScore` и
+  `reportDeliveredAt` сохраняются, поэтому аналитика не зависит от удалённого content.
 - Старые `user_requests` удаляются только если они не связаны с calendar window
+## Admin runtime settings
+
+`runtime_settings` is a checked singleton (`id = 'singleton'`) with JSON object
+columns for product and infrastructure overrides, independent non-negative CAS
+versions, updater attribution, and timestamptz audit fields. Migration
+`20260810140000_admin_runtime_settings` creates and seeds the row and extends
+the admin-audit action/entity checks for the two settings mutations. Secret
+values are never stored in this table; only closed-registry safe overrides are
+accepted by the application. Mutation plus success audit share one database
+transaction, so an audit failure rolls back the settings version and JSON.
+
   либо это окно уже закончилось. Так cleanup не ломает активное, в том числе
   25-часовое DST-окно.
 - Пустые quota windows удаляются, когда `windowEnd` старше rate-limit cutoff.
 - `error_logs` старше своего cutoff удаляются.
+- `admin_audit_logs` удаляются только при `createdAt < now - 365 days`; cleanup
+  идемпотентен и не смешивает audit retention с operational error logs.
 
 ## История миграций и backfill
 
@@ -357,6 +412,12 @@ Cleanup запускается ежедневно в 03:30 по runtime clock и
   dimensions в отдельные колонки.
 - `20260808180000_prompt_selection_history`: добавил descending history index
   для атомарного исключения последних prompt reservations.
+- `20260810160000_admin_analytics_facts`: backfill-ит и индексирует несекретные
+  activity/funnel/score/delivery facts; временная PL/pgSQL-функция безопасно
+  извлекает только валидный top-level `overallScore` и удаляется в той же миграции.
+
+- `20260810120000_admin_audit_log`: добавил отдельный append-only audit storage
+  с action/entity/outcome/failure CHECK constraints и stable inspection indexes.
 
 Production deployment должен делать backup и выполнять
 `npm run prisma:migrate:deploy` (или `npm run deploy:init`, который затем запускает

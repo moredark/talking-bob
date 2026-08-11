@@ -14,6 +14,7 @@ import { RateLimitModule } from "../rate-limit";
 import { AiModule } from "../ai";
 import { ScheduleModule } from "../schedule";
 import { ReportWorkflowService } from "./report-workflow.service";
+import { BroadcastModule } from "../broadcast";
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { ReportWorkflowService } from "./report-workflow.service";
     RateLimitModule,
     AiModule,
     ScheduleModule,
+    BroadcastModule,
   ],
   providers: [
     TelegramService,

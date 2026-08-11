@@ -9,6 +9,7 @@ import {
   WhisperService,
   LLMService,
 } from "./services";
+import { AiProviderTraceWriter } from "./services/ai-provider-trace-writer.service";
 
 @Module({
   providers: [
@@ -24,6 +25,7 @@ import {
         config.concurrency.aiRequestMaxPending,
     },
     AiRequestLimiterService,
+    AiProviderTraceWriter,
     {
       provide: WHISPER_SERVICE,
       useClass: WhisperService,

@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { Context, InlineKeyboard } from "grammy";
 import { RUNTIME_CONFIG } from "../../../config/runtime-config.module";
 import { RuntimeConfig } from "../../../config/runtime.config";
+import { RuntimeSettingsService } from "../../../config/runtime-settings.service";
 import { boundedFetch } from "../../../infrastructure/http";
 import { UserService } from "../../user";
 import { PromptService } from "../../prompt";
@@ -27,6 +28,7 @@ type VoiceProcessingStage =
 @Injectable()
 export class VoiceHandler {
   private readonly logger = new Logger(VoiceHandler.name);
+  @Inject(RuntimeSettingsService) private readonly settings!: RuntimeSettingsService;
   constructor(
     private readonly userService: UserService,
     private readonly promptService: PromptService,
@@ -46,12 +48,14 @@ export class VoiceHandler {
     if (!telegramId || !voice) {
       this.logger.warn("Received voice message without user or voice data"); return;
     }
-    if (voice.duration > this.runtimeConfig.voice.maxDurationSeconds) {
-      await ctx.reply(`Голосовое сообщение слишком длинное. Максимум — ${this.runtimeConfig.voice.maxDurationSeconds} секунд.`);
+    const maxDurationSeconds = this.settings.productNumber("VOICE_MAX_DURATION_SECONDS");
+    const maxFileSizeBytes = this.settings.productNumber("VOICE_MAX_FILE_SIZE_BYTES");
+    if (voice.duration > maxDurationSeconds) {
+      await ctx.reply(`Голосовое сообщение слишком длинное. Максимум — ${maxDurationSeconds} секунд.`);
       return;
     }
-    if (typeof voice.file_size === "number" && voice.file_size > this.runtimeConfig.voice.maxFileSizeBytes) {
-      await ctx.reply(`Голосовое сообщение слишком большое. Максимум — ${this.formatByteLimit(this.runtimeConfig.voice.maxFileSizeBytes)}.`);
+    if (typeof voice.file_size === "number" && voice.file_size > maxFileSizeBytes) {
+      await ctx.reply(`Голосовое сообщение слишком большое. Максимум — ${this.formatByteLimit(maxFileSizeBytes)}.`);
       return;
     }
     const user = await this.userService.findByTelegramId(BigInt(telegramId));
@@ -79,7 +83,7 @@ export class VoiceHandler {
     let stage: VoiceProcessingStage = "telegram_download";
 
     try {
-      const audio = await this.downloadVoiceFile(ctx, voice.file_id);
+      const audio = await this.downloadVoiceFile(ctx, voice.file_id, maxFileSizeBytes);
       stage = "whisper_transcribe";
       const { text: transcript } = await this.whisperService.transcribe(audio, "en");
       stage = "conversation_accept";
@@ -105,7 +109,10 @@ export class VoiceHandler {
         role: message.role as "user" | "assistant", content: message.content,
       }));
       stage = "llm_follow_up";
-      const followUp = await this.llmService.generateFollowUp(history, topic, tone);
+      const followUp = await this.llmService.generateFollowUp(history, topic, tone, {
+        userId: user.id, userPromptId: userPrompt.id, requestId: this.requestKey(ctx),
+        correlationId: this.observability?.current()?.correlationId,
+      });
       stage = "conversation_persist";
       const inserted = await this.conversationService.addAssistantMessageIfOpen(
         userPrompt.id, followUp, accepted.message.id,
@@ -149,14 +156,14 @@ export class VoiceHandler {
     return setInterval(() => ctx.api.sendChatAction(chatId, "typing").catch(() => {}), 4000);
   }
 
-  private async downloadVoiceFile(ctx: Context, fileId: string): Promise<Buffer> {
+  private async downloadVoiceFile(ctx: Context, fileId: string, maxFileSizeBytes: number): Promise<Buffer> {
     const file = await ctx.api.getFile(fileId);
     if (!file.file_path) throw new Error("File path not available");
     const url = `https://api.telegram.org/file/bot${this.runtimeConfig.telegramBotToken}/${file.file_path}`;
     const response = await boundedFetch(url, {
       timeoutMs: this.runtimeConfig.externalRequests.telegramFileDownload.timeoutMs,
       maxResponseBytes: Math.min(
-        this.runtimeConfig.voice.maxFileSizeBytes,
+        maxFileSizeBytes,
         this.runtimeConfig.externalRequests.telegramFileDownload.maxResponseBytes,
       ),
       safeToRetry: true,

@@ -161,6 +161,7 @@ function createBareService({
   drainTimeoutMs = 1_000,
   telegramUpdates = 4,
   aiRequestLimiter,
+  broadcastDispatcher,
 } = {}) {
   return new TelegramService(
     {
@@ -187,6 +188,9 @@ function createBareService({
       shutdown: { drainTimeoutMs },
     },
     aiRequestLimiter,
+    undefined,
+    undefined,
+    broadcastDispatcher,
   );
 }
 
@@ -438,6 +442,38 @@ test("TelegramService drains all middleware accepted by the real runner before s
   gates.get(2).resolve();
   await shutdown;
   assert.equal(service.telegramBusinessTasks.size, 0);
+});
+
+test("Telegram shutdown closes broadcast admission and drains it within the same absolute deadline", async () => {
+  const gate = deferred();
+  const events = [];
+  const service = createBareService({
+    drainTimeoutMs: 1000,
+    broadcastDispatcher: {
+      stopAdmission: () => events.push("stop"),
+      drain: () => { events.push("drain"); return gate.promise; },
+      finishShutdown: (drained) => events.push("finish:" + drained),
+    },
+  });
+  let settled = false;
+  const shutdown = service.onModuleDestroy().then(() => { settled = true; });
+  await tick();
+  assert.deepEqual(events, ["stop", "drain"]);
+  assert.equal(settled, false);
+  gate.resolve();
+  await shutdown;
+  assert.equal(service.telegramApiClosed, true);
+  assert.deepEqual(events, ["stop", "drain", "finish:true"]);
+
+  const never = new Promise(() => undefined);
+  const bounded = createBareService({
+    drainTimeoutMs: 30,
+    broadcastDispatcher: { stopAdmission() {}, drain: () => never, finishShutdown() {} },
+  });
+  const startedAt = Date.now();
+  await bounded.onModuleDestroy();
+  assert.ok(Date.now() - startedAt < 300);
+  assert.equal(bounded.telegramApiClosed, true);
 });
 
 test("shared Telegram API transformer blocks dispatcher-like calls after shutdown", async () => {

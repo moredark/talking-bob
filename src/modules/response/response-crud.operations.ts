@@ -38,6 +38,7 @@ export class ResponseCrudOperations {
               generatedAt: new Date(),
               analysisVersion: 0,
               analysisKind: "legacy",
+              overallScore: this.legacyOverallScore(data.analysis),
               generationClaimToken: null,
               generationClaimExpiresAt: null,
             }
@@ -56,6 +57,18 @@ export class ResponseCrudOperations {
 
   async getUserResponses(userId: string): Promise<UserResponse[]> {
     return this.prisma.userResponse.findMany({ where: { userId }, orderBy: { createdAt: "desc" } });
+  }
+
+  private legacyOverallScore(analysis: string | undefined): number | null {
+    if (!analysis) return null;
+    try {
+      const parsed: unknown = JSON.parse(analysis);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+      const value = (parsed as { overallScore?: unknown }).overallScore;
+      return typeof value === "number" && Number.isFinite(value) && value >= 1 && value <= 10 ? value : null;
+    } catch {
+      return null;
+    }
   }
 
   private async lockResponse(tx: Prisma.TransactionClient, id: string): Promise<void> {

@@ -1,7 +1,11 @@
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import * as bcrypt from "bcrypt";
 import * as jwt from "jsonwebtoken";
+import { RUNTIME_CONFIG } from "../../config/runtime-config.module";
+import { RuntimeConfig } from "../../config/runtime.config";
 import { PrismaService } from "../../infrastructure/database";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 
 export interface JwtPayload {
   sub: string;
@@ -18,11 +22,8 @@ export interface LoginResponse {
 
 @Injectable()
 export class AuthService {
-  private readonly jwtSecret: string;
-
-  constructor(private readonly prisma: PrismaService) {
-    this.jwtSecret = process.env.JWT_SECRET || "default-secret-change-me";
-  }
+  constructor(private readonly prisma: PrismaService,
+    @Inject(RUNTIME_CONFIG) private readonly config: RuntimeConfig) {}
 
   async login(username: string, password: string): Promise<LoginResponse> {
     const admin = await this.prisma.adminUser.findUnique({
@@ -44,7 +45,7 @@ export class AuthService {
       username: admin.username,
     };
 
-    const accessToken = jwt.sign(payload, this.jwtSecret, {
+    const accessToken = jwt.sign(payload, this.config.jwtSecret, {
       expiresIn: "7d",
     });
 
@@ -59,8 +60,17 @@ export class AuthService {
 
   async validateToken(token: string): Promise<JwtPayload> {
     try {
-      const payload = jwt.verify(token, this.jwtSecret) as JwtPayload;
-      return payload;
+      const payload = jwt.verify(token, this.config.jwtSecret);
+      if (
+        payload === null || typeof payload !== "object"
+        || typeof payload.sub !== "string" || !UUID_PATTERN.test(payload.sub)
+        || typeof payload.username !== "string"
+        || payload.username.trim().length < 1 || payload.username.length > 200
+        || /[\u0000-\u001f\u007f]/.test(payload.username)
+      ) {
+        throw new Error("Invalid token claims");
+      }
+      return { sub: payload.sub, username: payload.username.trim() };
     } catch {
       throw new UnauthorizedException("Invalid token");
     }

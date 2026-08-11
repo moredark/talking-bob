@@ -57,6 +57,7 @@ function createInMemoryPrisma({ prompts = [] } = {}) {
     conversationMessages: [],
     userResponses: [],
     reportDeliveryRequests: [],
+    userActivityDays: [],
     operations: [],
   };
   const sequence = { user: 0, userPrompt: 0, message: 0, response: 0, delivery: 0 };
@@ -100,6 +101,23 @@ function createInMemoryPrisma({ prompts = [] } = {}) {
         state.operations.push({ type: "transaction", phase: "rollback" });
         throw error;
       }
+    },
+    async $executeRaw(query, ...taggedValues) {
+      const { values } = sqlParts(query, taggedValues);
+      const [userId, localDateValue, firstActivityAt, lastActivityAt] = values;
+      const localDate = typeof localDateValue === "string"
+        ? new Date(localDateValue + "T00:00:00.000Z")
+        : localDateValue;
+      const existing = state.userActivityDays.find((row) => row.userId === userId && row.localDate.getTime() === localDate.getTime());
+      if (existing) {
+        existing.firstActivityAt = new Date(Math.min(existing.firstActivityAt.getTime(), firstActivityAt.getTime()));
+        existing.lastActivityAt = new Date(Math.max(existing.lastActivityAt.getTime(), lastActivityAt.getTime()));
+        existing.messageCount += 1;
+      } else {
+        state.userActivityDays.push({ userId, localDate, firstActivityAt, lastActivityAt, messageCount: 1 });
+      }
+      record("upsert", "userActivityDay", { userId, localDate });
+      return 1;
     },
     async $queryRaw(query, ...taggedValues) {
       const { text, values } = sqlParts(query, taggedValues);
@@ -189,6 +207,12 @@ function createInMemoryPrisma({ prompts = [] } = {}) {
         record("upsert", "user", { id: row.id, branch: "create" });
         return clone(row);
       },
+      async updateMany({ where, data }) {
+        const rows = state.users.filter((row) => matches(row, where));
+        for (const row of rows) Object.assign(row, clone(data), { updatedAt: now() });
+        record("updateMany", "user", { count: rows.length, data });
+        return { count: rows.length };
+      },
       async findUnique({ where }) {
         return clone(findUser(where) ?? null);
       },
@@ -233,6 +257,7 @@ function createInMemoryPrisma({ prompts = [] } = {}) {
           lastDeliveryErrorAt: null,
           conversationStatus: "open",
           conversationClosedAt: null,
+          firstUserMessageAt: null,
           ...clone(data),
         };
         state.userPrompts.push(row);
@@ -335,6 +360,8 @@ function createInMemoryPrisma({ prompts = [] } = {}) {
           lastGenerationErrorAt: null,
           analysisVersion: null,
           analysisKind: null,
+          overallScore: null,
+          reportDeliveredAt: null,
           sensitiveDataPurgedAt: null,
           createdAt: now(),
           ...clone(data),

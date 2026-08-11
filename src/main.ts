@@ -8,12 +8,15 @@ import {
   RuntimeConfigError,
 } from "./config/runtime.config";
 
+import { applyBootInfrastructure, loadRuntimeSettingsBootstrap } from "./config/runtime-settings.service";
 async function bootstrap() {
-  const runtimeConfig = parseRuntimeConfig(process.env);
+  const envConfig = parseRuntimeConfig(process.env);
+  const settings = await loadRuntimeSettingsBootstrap(envConfig, process.env);
+  const runtimeConfig = applyBootInfrastructure(envConfig, settings.bootInfrastructure);
   let app: INestApplication | undefined;
 
   try {
-    app = await NestFactory.create(AppModule.forRoot(runtimeConfig));
+    app = await NestFactory.create(AppModule.forRoot(runtimeConfig, settings));
     app.enableShutdownHooks();
 
     app.enableCors({

@@ -5,6 +5,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database";
+import { getLocalDateKey } from "../../shared/time/timezone";
 
 const GENERATION_LEASE_MS = 30 * 60 * 1000;
 
@@ -25,6 +26,8 @@ export type VoicePrecheckResult =
 export interface ConversationGenerationClaim {
   responseId: string;
   claimToken: string;
+  userId: string;
+  userPromptId: string;
   claimExpiresAt: Date;
 }
 
@@ -88,6 +91,38 @@ export class ConversationService {
           telegramUpdateId: data.telegramUpdateId,
         },
       });
+      await tx.user.updateMany({
+        where: {
+          id: data.userId,
+          OR: [
+            { lastUserMessageAt: null },
+            { lastUserMessageAt: { lt: message.createdAt } },
+          ],
+        },
+        data: { lastUserMessageAt: message.createdAt },
+      });
+      await tx.userPrompt.updateMany({
+        where: {
+          id: data.userPromptId,
+          OR: [
+            { firstUserMessageAt: null },
+            { firstUserMessageAt: { gt: message.createdAt } },
+          ],
+        },
+        data: { firstUserMessageAt: message.createdAt },
+      });
+      const localDate = getLocalDateKey(message.createdAt, "Europe/Moscow");
+      await tx.$executeRaw`
+        INSERT INTO "user_activity_days" (
+          "userId", "localDate", "firstActivityAt", "lastActivityAt", "messageCount"
+        ) VALUES (
+          ${data.userId}, ${localDate}::date, ${message.createdAt}, ${message.createdAt}, 1
+        )
+        ON CONFLICT ("userId", "localDate") DO UPDATE SET
+          "firstActivityAt" = LEAST("user_activity_days"."firstActivityAt", EXCLUDED."firstActivityAt"),
+          "lastActivityAt" = GREATEST("user_activity_days"."lastActivityAt", EXCLUDED."lastActivityAt"),
+          "messageCount" = "user_activity_days"."messageCount" + 1
+      `;
       const userMessageCount = await tx.conversationMessage.count({
         where: { userPromptId: data.userPromptId, role: "user" },
       });
@@ -125,7 +160,7 @@ export class ConversationService {
               generationAttemptedAt: now,
             },
           });
-          generationClaim = { responseId: response.id, claimToken, claimExpiresAt };
+          generationClaim = { responseId: response.id, userId: data.userId, userPromptId: data.userPromptId, claimToken, claimExpiresAt };
         }
       }
       return { outcome: "accepted", message, userMessageCount, generationClaim };

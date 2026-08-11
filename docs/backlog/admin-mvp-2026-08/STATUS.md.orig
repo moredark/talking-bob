@@ -1,0 +1,40 @@
+# Статус выполнения Admin MVP backlog
+
+Обновлено: 2026-08-10
+
+Этот файл — точка продолжения реализации. Перед началом и после завершения каждой задачи обновляются таблица, текущий фокус и журнал проверок. Подробные acceptance criteria остаются в task-файлах.
+
+## Сводка
+
+| Задача | Статус | Прогресс | Последняя проверка |
+|---|---|---|---|
+| 01 Admin-контракты и тестовый baseline | `in-progress` | Реализация контрактов и baseline-тестов | — |
+| 02 Admin audit log | `todo` | Не начато | — |
+| 03 Просмотр сессий в admin | `todo` | Не начато | — |
+| 04 Runtime-настройки в admin | `todo` | Не начато | — |
+| 05 Admin-рассылки | `todo` | Не начато | — |
+| 06 Admin-аналитика и графики | `todo` | Не начато | — |
+| 07 Интеграция и rollout Admin MVP | `todo` | Не начато | — |
+
+## Текущий фокус
+
+Задача `01` — [Admin-контракты и тестовый baseline](01-admin-contracts-and-test-baseline.md). До её завершения не начинать schema/API реализацию задач `02`–`07`.
+
+## Принятые рабочие решения
+
+- Migration merge order: `01` → `02` → `03` → `04` → `05`.
+- Для `06` schema migration не ожидается; backend отдаёт готовые агрегаты, UI строит графики через Unovis Vue и shadcn-vue.
+- `07` пополняется тестами и документацией рядом с каждой задачей, но остаётся `todo` до полного rollout gate.
+- Только extracted raw AI response content и allowlisted metadata хранятся 30 дней; request/system prompt, headers и полный JSON не сохраняются.
+- Runtime settings hybrid: hot product overrides применяются на следующем admission, infrastructure overrides требуют restart, readonly не изменяются, secrets показывают только `configured`; `process.env` не мутируется.
+- Broadcasts используют отдельный opt-out, точные filters и queued/processing lifecycle; immediate/scheduled время вводится по Москве, хранится как UTC instant.
+- Retention: AI calls 30 дней; session content — effective closed-conversation срок (default 30); audit 365; terminal broadcast content/recipients 90 и aggregate rows 365 дней.
+- Существующие незакоммиченные изменения других участников сохраняются.
+
+## Журнал проверок
+
+- Проверки реализации ещё не запускались.
+
+## Следующая точка продолжения
+
+Начать discovery задачи `01`, зафиксировать текущие admin API/UI contracts и добавить baseline contract tests до первой feature migration.

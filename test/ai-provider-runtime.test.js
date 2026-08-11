@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
+const { installRuntimeSettings } = require("./support/runtime-settings-test-harness");
 const {
   BoundedHttpError,
 } = require("../dist/infrastructure/http/bounded-http");
@@ -15,6 +16,7 @@ const {
 const {
   WhisperService,
 } = require("../dist/modules/ai/services/whisper.service");
+installRuntimeSettings(LLMService);
 
 function config({ whisper = {}, llm = {} } = {}) {
   return {

@@ -125,8 +125,8 @@ export class ErrorLogService {
     await this.capture(params);
   }
 
-  async getLogs(options: { type?: ErrorType; service?: ErrorService; correlationId?: string; limit?: number; offset?: number }) {
-    const { type, service, correlationId, limit = 50, offset = 0 } = options;
+  async getLogs(options: { type?: ErrorType; service?: ErrorService; correlationId?: string; limit?: number; offset?: number; stableOrder?: boolean }) {
+    const { type, service, correlationId, limit = 50, offset = 0, stableOrder = false } = options;
     const where: Record<string, string> = {};
     if (type) where.type = type;
     if (service) where.service = service;
@@ -136,7 +136,7 @@ export class ErrorLogService {
     }
     if (safeCorrelationId) where.correlationId = safeCorrelationId;
     const [logs, total] = await Promise.all([
-      this.prisma.errorLog.findMany({ where, orderBy: { createdAt: "desc" }, take: limit, skip: offset }),
+      this.prisma.errorLog.findMany({ where, orderBy: stableOrder ? [{ createdAt: "desc" }, { id: "desc" }] : { createdAt: "desc" }, take: limit, skip: offset }),
       this.prisma.errorLog.count({ where }),
     ]);
     return { logs, total };

@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const { GrammyError, HttpError } = require("grammy");
 const { ReportHandler } = require("../dist/modules/telegram/handlers/report.handler");
+const { ObservabilityContextService } = require("../dist/modules/error-log");
 
 const feedback = {
   summary: "Good answer.",
@@ -14,6 +15,8 @@ const feedback = {
 function generationClaim(id = "response-1") {
   return {
     responseId: id,
+    userId: "user-1",
+    userPromptId: "user-prompt-1",
     claimToken: `generation-${id}`,
     claimExpiresAt: new Date("2026-08-08T10:00:00.000Z"),
   };
@@ -56,7 +59,7 @@ function context(messageId = 10, replyImpl) {
   };
 }
 
-function createSubject({ claimResult, response = {}, llm = {}, messages } = {}) {
+function createSubject({ claimResult, response = {}, llm = {}, messages, observability } = {}) {
   const calls = {
     claim: [], completeGeneration: [], createDelivery: [], begin: [],
     completeChunk: [], failGeneration: [], definite: [], ambiguous: [], llm: [],
@@ -127,10 +130,25 @@ function createSubject({ claimResult, response = {}, llm = {}, messages } = {}) 
         return llm.analyzeSpeech ? llm.analyzeSpeech(...args) : feedback;
       },
     },
+    undefined,
+    observability,
   );
   return { calls, handler };
 }
 
+
+test("report AI trace inherits the active update correlation", async () => {
+  const observability = new ObservabilityContextService();
+  const response = { activeChunks: [] };
+  const { calls, handler } = createSubject({ response, observability });
+  response.completeGeneration = async (data) => { response.activeChunks = data.chunks; return { outcome: "claimed", claim: deliveryClaim(data.chunks) }; };
+  const { ctx } = context();
+  await observability.run({ correlationId: "tg-report-10" }, () => handler.handle(ctx));
+  assert.deepEqual(calls.llm[0][4], {
+    userId: "user-1", userPromptId: "user-prompt-1", userResponseId: "response-1",
+    requestId: "response-1", correlationId: "tg-report-10",
+  });
+});
 test("ReportHandler manual claim generates and persists once, then delivers plain chunks with only a final keyboard", async () => {
   const longFeedback = { ...feedback, summary: `${"clear explanation ".repeat(270)}done` };
   const response = { activeChunks: [] };
@@ -152,6 +170,7 @@ test("ReportHandler manual claim generates and persists once, then delivers plai
   assert.equal(calls.completeGeneration[0].analysis, JSON.stringify(longFeedback));
   assert.equal(calls.completeGeneration[0].analysisVersion, 1);
   assert.equal(calls.completeGeneration[0].analysisKind, "model");
+  assert.equal(calls.completeGeneration[0].overallScore, 8);
   assert.ok(calls.completeGeneration[0].chunks.length > 1);
   assert.deepEqual(replies.map(([text]) => text), calls.completeGeneration[0].chunks);
   for (const [, options] of replies) assert.equal(options?.parse_mode, undefined);

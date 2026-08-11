@@ -21,6 +21,8 @@ export interface ClaimGenerationData extends CreateResponseData {
 
 export interface GenerationClaim {
   responseId: string;
+  userId?: string;
+  userPromptId?: string;
   claimToken: string;
   claimExpiresAt: Date;
 }
@@ -40,6 +42,7 @@ export interface CompleteGenerationData {
   analysis: string;
   analysisVersion: number;
   analysisKind: ReportAnalysisKind;
+  overallScore: number | null;
   chunks: string[];
 }
 

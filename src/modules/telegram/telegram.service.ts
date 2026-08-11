@@ -22,6 +22,7 @@ import {
   AiRequestLimiterService,
 } from "../ai";
 import { DailyPromptDispatcher } from "../schedule";
+import { BroadcastDispatcher } from "../broadcast";
 import { ErrorLogService, ObservabilityContextService } from "../error-log";
 import { ReportHandler } from "./handlers/report.handler";
 import { SettingsHandler } from "./handlers/settings.handler";
@@ -71,6 +72,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     @Optional() private readonly aiRequestLimiter?: AiRequestLimiterService,
     private readonly errorLog?: ErrorLogService,
     private readonly observability?: ObservabilityContextService,
+    @Optional() private readonly broadcastDispatcher?: BroadcastDispatcher,
   ) {
     this.bot = new Bot(runtimeConfig.telegramBotToken, {
       client: {
@@ -89,6 +91,11 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   onModuleInit(): void {
     this.registerHandlers();
     this.dailyPromptDispatcher.setBot(this.bot);
+    this.broadcastDispatcher?.setSender({
+      sendPlainText: async (telegramId, content, signal) => {
+        await this.bot.api.sendMessage(telegramId.toString(), content, undefined, signal);
+      },
+    });
     this.startRunner();
   }
 
@@ -99,6 +106,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     const deadline = Date.now() + this.runtimeConfig.shutdown.drainTimeoutMs;
     this.shutdownDeadline = deadline;
     this.aiRequestLimiter?.close();
+    this.broadcastDispatcher?.stopAdmission(deadline);
 
     if (this.botStartRetryTimer) {
       clearTimeout(this.botStartRetryTimer);
@@ -110,9 +118,11 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       this.drainTelegramBusinessTasks(),
       this.drainCallbackAcknowledgements(),
       this.aiRequestLimiter?.drain() ?? Promise.resolve(),
+      this.broadcastDispatcher?.drain() ?? Promise.resolve(),
     ]).then(() => undefined);
 
     const drained = await this.waitUntilDeadline(shutdownWork, deadline);
+    await this.broadcastDispatcher?.finishShutdown(drained);
     this.telegramApiClosed = true;
     if (!drained) {
       this.logger.warn(
@@ -154,6 +164,9 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     );
     this.bot.callbackQuery("toggle_daily", (ctx) =>
       this.settingsHandler.handleToggle(ctx),
+    );
+    this.bot.callbackQuery("toggle_announcements", (ctx) =>
+      this.settingsHandler.handleAnnouncementToggle(ctx),
     );
     this.bot.callbackQuery(/^set_time_\d+_\d+$/, (ctx) =>
       this.settingsHandler.handleTimeSelect(ctx, ctx.callbackQuery.data),

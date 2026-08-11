@@ -43,6 +43,7 @@ export class SettingsHandler {
     await this.showSettings(
       ctx,
       user.dailyPromptEnabled,
+      user.announcementEnabled,
       user.dailyPromptHour,
       user.dailyPromptMinute,
       user.timezone,
@@ -67,6 +68,27 @@ export class SettingsHandler {
     await this.editSettings(
       ctx,
       updated.dailyPromptEnabled,
+      updated.announcementEnabled,
+      updated.dailyPromptHour,
+      updated.dailyPromptMinute,
+      updated.timezone,
+      this.normalizeTone(updated.agentTone),
+    );
+  }
+
+  async handleAnnouncementToggle(ctx: Context): Promise<void> {
+    const telegramId = ctx.from?.id;
+    if (!telegramId) return;
+    const user = await this.userService.findByTelegramId(BigInt(telegramId));
+    if (!user) return;
+    const updated = await this.userService.updateAnnouncementEnabled(
+      user.id,
+      !user.announcementEnabled,
+    );
+    await this.editSettings(
+      ctx,
+      updated.dailyPromptEnabled,
+      updated.announcementEnabled,
       updated.dailyPromptHour,
       updated.dailyPromptMinute,
       updated.timezone,
@@ -109,6 +131,7 @@ export class SettingsHandler {
     await this.editSettings(
       ctx,
       updated.dailyPromptEnabled,
+      updated.announcementEnabled,
       updated.dailyPromptHour,
       updated.dailyPromptMinute,
       updated.timezone,
@@ -137,6 +160,7 @@ export class SettingsHandler {
     await this.editSettings(
       ctx,
       updated.dailyPromptEnabled,
+      updated.announcementEnabled,
       updated.dailyPromptHour,
       updated.dailyPromptMinute,
       updated.timezone,
@@ -147,26 +171,28 @@ export class SettingsHandler {
   private async showSettings(
     ctx: Context,
     enabled: boolean,
+    announcementsEnabled: boolean,
     hour: number,
     minute: number,
     timezone: string,
     tone: AgentTone,
   ): Promise<void> {
-    const text = this.formatSettingsText(enabled, hour, minute, timezone, tone);
-    const keyboard = this.buildKeyboard(enabled, tone);
+    const text = this.formatSettingsText(enabled, announcementsEnabled, hour, minute, timezone, tone);
+    const keyboard = this.buildKeyboard(enabled, announcementsEnabled, tone);
     await ctx.reply(text, { reply_markup: keyboard, parse_mode: "HTML" });
   }
 
   private async editSettings(
     ctx: Context,
     enabled: boolean,
+    announcementsEnabled: boolean,
     hour: number,
     minute: number,
     timezone: string,
     tone: AgentTone,
   ): Promise<void> {
-    const text = this.formatSettingsText(enabled, hour, minute, timezone, tone);
-    const keyboard = this.buildKeyboard(enabled, tone);
+    const text = this.formatSettingsText(enabled, announcementsEnabled, hour, minute, timezone, tone);
+    const keyboard = this.buildKeyboard(enabled, announcementsEnabled, tone);
 
     try {
       await ctx.editMessageText(text, { reply_markup: keyboard, parse_mode: "HTML" });
@@ -177,12 +203,14 @@ export class SettingsHandler {
 
   private formatSettingsText(
     enabled: boolean,
+    announcementsEnabled: boolean,
     hour: number,
     minute: number,
     timezone: string,
     tone: AgentTone,
   ): string {
     const status = enabled ? "включена" : "выключена";
+    const announcementStatus = announcementsEnabled ? "включены" : "выключены";
     const time = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
     const toneLabel =
       tone === "playful"
@@ -192,17 +220,23 @@ export class SettingsHandler {
     return (
       `<b>Настройки</b>\n\n` +
       `Рассылка: <b>${status}</b>\n` +
+      `Анонсы: <b>${announcementStatus}</b>\n` +
       `Время (${resolveEffectiveTimeZone(timezone).timeZone}): <b>${time}</b>\n` +
       `Тон агента: <b>${toneLabel}</b>`
     );
   }
 
-  private buildKeyboard(enabled: boolean, tone: AgentTone): InlineKeyboard {
+  private buildKeyboard(enabled: boolean, announcementsEnabled: boolean, tone: AgentTone): InlineKeyboard {
     const keyboard = new InlineKeyboard();
 
     keyboard.text(
       enabled ? "🔕 Выключить" : "🔔 Включить",
       "toggle_daily",
+    );
+    keyboard.row();
+    keyboard.text(
+      announcementsEnabled ? "🔕 Отключить анонсы" : "📣 Включить анонсы",
+      "toggle_announcements",
     );
     keyboard.row();
 

@@ -1,9 +1,11 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
+const { installRuntimeSettings } = require("./support/runtime-settings-test-harness");
 const {
   VoiceHandler,
 } = require("../dist/modules/telegram/handlers/voice.handler");
+installRuntimeSettings(VoiceHandler);
 
 function runtimeConfig(download = {}, voice = {}) {
   return {
@@ -103,6 +105,13 @@ function createSubject({
     },
     config,
   );
+  handler.settings = {
+    productNumber: (key) => {
+      if (key === "VOICE_MAX_DURATION_SECONDS") return config.voice.maxDurationSeconds;
+      if (key === "VOICE_MAX_FILE_SIZE_BYTES") return config.voice.maxFileSizeBytes;
+      throw new Error(`Unexpected voice runtime setting: ${key}`);
+    },
+  };
   const context = {
     from: { id: 123 },
     chat: { id: 123 },

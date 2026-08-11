@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database";
 import {
@@ -9,6 +9,7 @@ import {
   getCalendarDayRange,
   resolveEffectiveTimeZone,
 } from "../../shared/time/timezone";
+import { RuntimeSettingsService } from "../../config/runtime-settings.service";
 
 export { CalendarDayRange, getCalendarDayRange };
 
@@ -28,6 +29,7 @@ export type RateLimitAdmission =
 
 @Injectable()
 export class RateLimitService {
+  @Inject(RuntimeSettingsService) private readonly settings!: RuntimeSettingsService;
   constructor(private readonly prisma: PrismaService) {}
 
   async checkLimit(
@@ -35,8 +37,7 @@ export class RateLimitService {
     action: string,
     config?: RateLimitConfig
   ): Promise<boolean> {
-    const { maxRequests, windowMinutes } =
-      config ?? DEFAULT_RATE_LIMITS[action] ?? DEFAULT_RATE_LIMITS.command;
+    const { maxRequests, windowMinutes } = config ?? this.rollingConfig(action);
 
     const count = await this.getActionCount(userId, action, windowMinutes);
     return count < maxRequests;
@@ -56,8 +57,7 @@ export class RateLimitService {
     action: string,
     config?: RateLimitConfig,
   ): Promise<RateLimitAdmission> {
-    const { maxRequests, windowMinutes } =
-      config ?? DEFAULT_RATE_LIMITS[action] ?? DEFAULT_RATE_LIMITS.command;
+    const { maxRequests, windowMinutes } = config ?? this.rollingConfig(action);
 
     return this.retrySerializable(async (transaction, attemptedAt) => {
       const windowStart = new Date(
@@ -214,6 +214,18 @@ export class RateLimitService {
 
     return 0;
   }
+  private rollingConfig(action: string): RateLimitConfig {
+    const defaults = DEFAULT_RATE_LIMITS[action] ?? DEFAULT_RATE_LIMITS.command;
+    if (action === "voice_response") return {
+      maxRequests: this.settings.productNumber("VOICE_RESPONSE_MAX_REQUESTS"),
+      windowMinutes: this.settings.productNumber("VOICE_RESPONSE_WINDOW_MINUTES"),
+    };
+    return {
+      maxRequests: this.settings.productNumber("COMMAND_MAX_REQUESTS"),
+      windowMinutes: this.settings.productNumber("COMMAND_WINDOW_MINUTES"),
+    };
+  }
+
 
   async getActionCount(
     userId: string,

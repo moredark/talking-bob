@@ -28,6 +28,7 @@ export class UserService {
         telegramId: data.telegramId,
         username: data.username,
         dailyPromptEnabled: true,
+        announcementEnabled: true,
         dailyPromptHour: 13,
         dailyPromptMinute: 0,
         timezone: DEFAULT_USER_TIMEZONE,
@@ -43,6 +44,13 @@ export class UserService {
 
   async getAllUsers(): Promise<User[]> {
     return this.prisma.user.findMany();
+  }
+
+  async updateAnnouncementEnabled(userId: string, enabled: boolean): Promise<User> {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { announcementEnabled: enabled },
+    });
   }
 
   async updateAgentTone(userId: string, tone: AgentTone): Promise<User> {
@@ -66,6 +74,7 @@ export class UserService {
           telegramId,
           username,
           dailyPromptEnabled: true,
+        announcementEnabled: true,
           dailyPromptHour: 13,
           dailyPromptMinute: 0,
           timezone: DEFAULT_USER_TIMEZONE,

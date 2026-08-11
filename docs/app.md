@@ -1,7 +1,7 @@
 # Talking Bob: application contract
 
-> Verified against the backend on 2026-08-08, through migration
-> `20260808180000_prompt_selection_history`.
+> Verified against the backend on 2026-08-10, through migration
+> `20260810160000_admin_analytics_facts`.
 
 Talking Bob is a Telegram bot for practising spoken English. User-facing
 commands, status messages, and report feedback are in Russian. Questions and
@@ -152,6 +152,22 @@ returns a sanitized `503` while Telegram starts, waits to restart, or shuts
 down. Neither endpoint calls Whisper or the LLM. Both responses disable
 caching. The runtime image healthcheck uses readiness.
 
+## Admin audit contract
+
+Every authenticated admin response echoes normalized `x-request-id` and
+`x-correlation-id` headers. The JWT admin id and username are captured as an
+actor snapshot for audit records. User updates/progress resets, prompt
+create/update/delete, and old error-log cleanup write one success audit row in
+the same database callback transaction as the mutation. A success-audit write
+failure rolls the mutation back. Rejected mutations attempt one separate
+sanitized failure row without replacing the original HTTP error.
+
+`GET /admin/audit-logs` is read-only, authenticated, bounded to 100 rows,
+ordered by `createdAt desc, id desc`, and supports strict actor/action/entity/
+outcome plus half-open UTC `[from,to)` filters. `GET /admin/audit-logs/:id`
+returns allowlisted before/after metadata. There is no audit update, delete, or
+manual-clear endpoint.
+
 ## Privacy and retention
 
 The retention job runs daily at `03:30` according to the runtime clock. Its day
@@ -160,7 +176,10 @@ conversations it deletes report-delivery request rows together with their
 chunks and deletes conversation messages, nulls voice-file identifiers,
 transcripts, and analysis, and sets
 `sensitiveDataPurgedAt` while preserving conversation lifecycle and
-prompt-delivery provenance.
+prompt-delivery provenance. Retention-safe admin analytics preserves only
+non-sensitive activity-day, first-message, score, and report-delivery
+timestamps; these facts contain no transcript, message, provider response, or
+recipient identity.
 `/report` gives an explicit message when saved report content has been purged.
 
 Expired request-audit rows, orphaned expired quota windows, and sanitized error
@@ -204,16 +223,34 @@ must parse to safe integers in the inclusive ranges below.
 | `TALKING_BOB_RUNTIME_DIGEST` | required by production Compose | runtime image `sha256:` digest | no |
 | `TALKING_BOB_INIT_IMAGE` | required by production Compose | init image repository, without digest | no |
 | `TALKING_BOB_INIT_DIGEST` | required by production Compose | init image `sha256:` digest | no |
-| `JWT_SECRET` | source has an unsafe development fallback | Existing HTTP auth signing secret; non-empty string | yes |
+| `JWT_SECRET` | required; non-empty | HTTP auth signing and verification secret | yes |
 | `ADMIN_CORS_ORIGIN` | `http://localhost:5173` | Existing HTTP CORS origin | no |
 | `ADMIN_USERNAME` | optional, only as a pair with password | Seed command; non-empty string | no |
 | `ADMIN_PASSWORD` | optional, only as a pair with username | Seed command; non-empty string | yes |
 
 The three `POSTGRES_*` values configure the Compose PostgreSQL service, not the
-bot process. Every production deployment must set an explicit strong
-`JWT_SECRET`; its source fallback is not production-safe. The optional seed
+bot process. Runtime bootstrap rejects a missing or blank `JWT_SECRET`. The optional seed
 pair is consumed only by `npm run prisma:seed` / `npm run deploy:init`.
 
+### Admin runtime settings
+
+Startup parses and validates the environment first, then loads the singleton
+`runtime_settings` row using the immutable `DATABASE_URL` before Nest starts.
+Database, table, or singleton-row failure is fatal. Invalid persisted keys are
+reported by key only and fall back independently to their validated env/default.
+The process never mutates `process.env`.
+
+`GET /admin/settings` separates hot product values, restart-required
+infrastructure values, safe readonly descriptors, and secret `configured`
+booleans. Product and infrastructure PATCHes use independent CAS versions and
+write key-only before/after audit metadata in the same transaction. Product
+changes affect the next rate/start/LLM/voice/cleanup admission; infrastructure
+changes remain pending until restart. AI provider-call retention remains fixed
+at 30 days.
+
+Rolling rate defaults remain voice `10/60`, command `30/60`, and dialogs/day
+`20`. Registry hard caps of 1000 requests/dialogs and 10080 minutes are
+deliberate operational guardrails, not new defaults.
 ## Related documentation
 
 - [Architecture guide](architecture/README.md)

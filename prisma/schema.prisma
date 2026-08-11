@@ -42,30 +42,57 @@ enum ReportDeliveryStatus {
   failed
 }
 
-model User {
-  id                 String    @id @default(uuid())
-  telegramId         BigInt    @unique
-  username           String?
-  dailyPromptEnabled Boolean   @default(true)
-  dailyPromptHour    Int       @default(13)
-  dailyPromptMinute  Int       @default(0)
-  timezone           String    @default("Europe/Moscow")
-  agentTone          String    @default("friendly")
-  lastPromptSentAt   DateTime? @db.Timestamptz(3)
-  nextPromptAt       DateTime? @db.Timestamptz(3)
-  languageLevel      String?
-  status             String    @default("active")
-  bannedAt           DateTime?
-  bannedReason       String?
-  createdAt          DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt          DateTime  @updatedAt @db.Timestamptz(3)
+enum BroadcastMode {
+  immediate
+  scheduled
+}
 
-  userPrompts   UserPrompt[]
-  userResponses UserResponse[]
-  userRequests  UserRequest[]
-  quotaWindows  QuotaWindow[]
+enum BroadcastStatus {
+  queued
+  processing
+  completed
+  completed_with_errors
+  cancelled
+}
+
+enum BroadcastRecipientStatus {
+  pending
+  sent
+  failed
+  ambiguous
+  skipped
+}
+
+model User {
+  id                  String    @id @default(uuid())
+  telegramId          BigInt    @unique
+  username            String?
+  dailyPromptEnabled  Boolean   @default(true)
+  announcementEnabled Boolean   @default(true)
+  lastUserMessageAt   DateTime? @db.Timestamptz(3)
+  dailyPromptHour     Int       @default(13)
+  dailyPromptMinute   Int       @default(0)
+  timezone            String    @default("Europe/Moscow")
+  agentTone           String    @default("friendly")
+  lastPromptSentAt    DateTime? @db.Timestamptz(3)
+  nextPromptAt        DateTime? @db.Timestamptz(3)
+  languageLevel       String?
+  status              String    @default("active")
+  bannedAt            DateTime?
+  bannedReason        String?
+  createdAt           DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime  @updatedAt @db.Timestamptz(3)
+
+  userPrompts         UserPrompt[]
+  userResponses       UserResponse[]
+  aiProviderCalls     AiProviderCall[]
+  userRequests        UserRequest[]
+  quotaWindows        QuotaWindow[]
+  broadcastRecipients BroadcastRecipient[]
+  activityDays        UserActivityDay[]
 
   @@index([nextPromptAt])
+  @@index([lastUserMessageAt], map: "users_lastUserMessageAt_idx")
   @@map("users")
 }
 
@@ -104,21 +131,42 @@ model UserPrompt {
   lastDeliveryErrorAt    DateTime?                @db.Timestamptz(3)
   conversationStatus     ConversationStatus       @default(open)
   conversationClosedAt   DateTime?                @db.Timestamptz(3)
+  firstUserMessageAt     DateTime?                @db.Timestamptz(3)
 
-  user   User   @relation(fields: [userId], references: [id])
-  prompt Prompt @relation(fields: [promptId], references: [id])
+  contentPurgedAt DateTime? @db.Timestamptz(3)
+  aiTracePurgedAt DateTime? @db.Timestamptz(3)
+  user            User      @relation(fields: [userId], references: [id])
+  prompt          Prompt    @relation(fields: [promptId], references: [id])
 
   userResponse         UserResponse?
   conversationMessages ConversationMessage[]
+  aiProviderCalls      AiProviderCall[]
 
   @@index([userId])
   @@index([userId, createdAt(sort: Desc), id(sort: Desc)], map: "user_prompts_user_created_id_idx")
   @@index([promptId])
   @@index([userId, deliveryStatus, sentAt])
+  @@index([createdAt(sort: Desc), id(sort: Desc)], map: "user_prompts_created_id_idx")
   @@index([deliveryStatus, deliveryAttemptedAt, claimExpiresAt], map: "user_prompts_delivery_retry_idx")
   @@index([conversationStatus, conversationClosedAt], map: "user_prompts_conversation_status_idx")
   @@index([scheduledOccurrenceKey])
+  @@index([sentAt], map: "user_prompts_sent_at_idx")
+  @@index([firstUserMessageAt], map: "user_prompts_first_user_message_at_idx")
   @@map("user_prompts")
+}
+
+model UserActivityDay {
+  userId          String
+  localDate       DateTime @db.Date
+  firstActivityAt DateTime @db.Timestamptz(3)
+  lastActivityAt  DateTime @db.Timestamptz(3)
+  messageCount    Int      @default(1)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, localDate])
+  @@index([localDate, userId], map: "user_activity_days_local_date_user_idx")
+  @@map("user_activity_days")
 }
 
 model ConversationMessage {
@@ -153,6 +201,8 @@ model UserResponse {
   lastGenerationErrorAt    DateTime?              @db.Timestamptz(3)
   analysisVersion          Int?
   analysisKind             ReportAnalysisKind?
+  overallScore             Float?
+  reportDeliveredAt        DateTime?              @db.Timestamptz(3)
   sensitiveDataPurgedAt    DateTime?              @db.Timestamptz(3)
   createdAt                DateTime               @default(now()) @db.Timestamptz(3)
 
@@ -161,9 +211,13 @@ model UserResponse {
 
   reportDeliveryRequests ReportDeliveryRequest[]
 
+  aiProviderCalls AiProviderCall[]
+
   @@index([userId])
   @@index([generationStatus, generationAttemptedAt, generationClaimExpiresAt], map: "user_responses_generation_reclaim_idx")
   @@index([sensitiveDataPurgedAt], map: "user_responses_sensitive_data_purged_idx")
+  @@index([generatedAt], map: "user_responses_generated_at_idx")
+  @@index([reportDeliveredAt], map: "user_responses_report_delivered_at_idx")
   @@map("user_responses")
 }
 
@@ -225,6 +279,14 @@ model QuotaWindow {
   @@map("quota_windows")
 }
 
+model AdminAnalyticsCoverage {
+  id           String   @id
+  completeFrom DateTime @db.Timestamptz(3)
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  @@map("admin_analytics_coverage")
+}
+
 model AdminUser {
   id           String   @id @default(uuid())
   username     String   @unique
@@ -256,4 +318,132 @@ model ErrorLog {
   @@index([correlationId, createdAt], map: "error_logs_correlation_created_idx")
   @@index([service, operation, createdAt], map: "error_logs_service_operation_created_idx")
   @@map("error_logs")
+}
+
+model AdminAuditLog {
+  id            String   @id @default(uuid())
+  actorId       String   @db.VarChar(160)
+  actorUsername String
+  action        String   @db.VarChar(80)
+  entityType    String   @db.VarChar(80)
+  entityId      String?  @db.VarChar(160)
+  outcome       String   @db.VarChar(16)
+  requestId     String   @db.VarChar(160)
+  correlationId String   @db.VarChar(160)
+  before        Json?
+  after         Json?
+  failureCode   String?  @db.VarChar(80)
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([createdAt(sort: Desc), id(sort: Desc)], map: "admin_audit_logs_created_id_idx")
+  @@index([actorId, createdAt(sort: Desc), id(sort: Desc)], map: "admin_audit_logs_actor_created_id_idx")
+  @@index([entityType, entityId, createdAt(sort: Desc), id(sort: Desc)], map: "admin_audit_logs_entity_created_id_idx")
+  @@index([action, createdAt(sort: Desc), id(sort: Desc)], map: "admin_audit_logs_action_created_id_idx")
+  @@index([outcome, createdAt(sort: Desc), id(sort: Desc)], map: "admin_audit_logs_outcome_created_id_idx")
+  @@map("admin_audit_logs")
+}
+
+model AiProviderCall {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String
+  userPromptId    String
+  userResponseId  String?
+  operation       String   @db.VarChar(32)
+  provider        String   @db.VarChar(80)
+  model           String   @db.VarChar(160)
+  attempt         Int
+  outcome         String   @db.VarChar(16)
+  statusCode      Int?
+  latencyMs       Int
+  inputTokens     Int?
+  outputTokens    Int?
+  totalTokens     Int?
+  responseContent String?
+  failureCode     String?  @db.VarChar(80)
+  correlationId   String?  @db.VarChar(160)
+  requestId       String?  @db.VarChar(160)
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userPrompt   UserPrompt    @relation(fields: [userPromptId], references: [id], onDelete: Cascade)
+  userResponse UserResponse? @relation(fields: [userResponseId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt(sort: Desc), id(sort: Desc)], map: "ai_provider_calls_created_id_idx")
+  @@index([userPromptId, createdAt, id], map: "ai_provider_calls_session_created_id_idx")
+  @@index([userId, createdAt(sort: Desc), id(sort: Desc)], map: "ai_provider_calls_user_created_id_idx")
+  @@index([userResponseId], map: "ai_provider_calls_response_idx")
+  @@map("ai_provider_calls")
+}
+
+model RuntimeSettings {
+  id                      String   @id @default("singleton") @db.VarChar(32)
+  productOverrides        Json     @default("{}")
+  infrastructureOverrides Json     @default("{}")
+  productVersion          Int      @default(0)
+  infrastructureVersion   Int      @default(0)
+  updatedById             String?  @db.VarChar(160)
+  updatedByUsername       String?  @db.VarChar(200)
+  createdAt               DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime @updatedAt @db.Timestamptz(3)
+
+  @@map("runtime_settings")
+}
+
+model Broadcast {
+  id                String          @id @default(uuid()) @db.Uuid
+  content           String?
+  contentPurgedAt   DateTime?       @db.Timestamptz(3)
+  filters           Json
+  mode              BroadcastMode
+  scheduledForLocal String?         @db.VarChar(16)
+  scheduledAt       DateTime        @db.Timestamptz(3)
+  status            BroadcastStatus @default(queued)
+  totalRecipients   Int             @default(0)
+  sentCount         Int             @default(0)
+  failedCount       Int             @default(0)
+  ambiguousCount    Int             @default(0)
+  skippedCount      Int             @default(0)
+  createdById       String          @db.VarChar(160)
+  createdByUsername String          @db.VarChar(200)
+  terminalAt        DateTime?       @db.Timestamptz(3)
+  createdAt         DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime        @updatedAt @db.Timestamptz(3)
+
+  recipients BroadcastRecipient[]
+
+  @@index([status, scheduledAt, id], map: "broadcasts_dispatch_idx")
+  @@index([createdAt(sort: Desc), id(sort: Desc)], map: "broadcasts_created_id_idx")
+  @@index([terminalAt], map: "broadcasts_terminal_idx")
+  @@map("broadcasts")
+}
+
+model BroadcastRecipient {
+  id                          String                   @id @default(uuid()) @db.Uuid
+  broadcastId                 String                   @db.Uuid
+  userId                      String
+  telegramIdSnapshot          BigInt
+  usernameSnapshot            String?
+  languageLevelSnapshot       String?
+  dailyPromptEnabledSnapshot  Boolean
+  announcementEnabledSnapshot Boolean
+  status                      BroadcastRecipientStatus @default(pending)
+  attemptCount                Int                      @default(0)
+  claimToken                  String?                  @db.Uuid
+  claimExpiresAt              DateTime?                @db.Timestamptz(3)
+  nextAttemptAt               DateTime?                @db.Timestamptz(3)
+  deliveryAttemptedAt         DateTime?                @db.Timestamptz(3)
+  sentAt                      DateTime?                @db.Timestamptz(3)
+  lastErrorCode               String?                  @db.VarChar(80)
+  lastErrorAt                 DateTime?                @db.Timestamptz(3)
+  createdAt                   DateTime                 @default(now()) @db.Timestamptz(3)
+  updatedAt                   DateTime                 @updatedAt @db.Timestamptz(3)
+
+  broadcast Broadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([broadcastId, userId])
+  @@index([status, nextAttemptAt, claimExpiresAt], map: "broadcast_recipients_claim_idx")
+  @@index([broadcastId, status, createdAt, id], map: "broadcast_recipients_detail_idx")
+  @@index([userId], map: "broadcast_recipients_user_idx")
+  @@map("broadcast_recipients")
 }

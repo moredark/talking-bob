@@ -6,4 +6,4 @@ export type {
   UserDetail,
   TopicStats,
   PaginatedResult,
-} from "./admin.service";
+} from "./admin.contracts";

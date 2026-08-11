@@ -110,15 +110,26 @@ export class ResponseDeliveryOperations {
       const chunks = this.readChunks(request!);
       const nextChunkIndex = chunkIndex + 1;
       if (nextChunkIndex === chunks.length) {
+        const deliveredAt = new Date();
         const delivered = await tx.reportDeliveryRequest.update({
           where: { id: requestId },
           data: {
             status: "delivered",
             nextChunkIndex,
-            deliveredAt: new Date(),
+            deliveredAt,
             lastDeliveryErrorCode: null,
             lastDeliveryErrorAt: null,
           },
+        });
+        await tx.userResponse.updateMany({
+          where: {
+            id: request!.userResponseId,
+            OR: [
+              { reportDeliveredAt: null },
+              { reportDeliveredAt: { lt: deliveredAt } },
+            ],
+          },
+          data: { reportDeliveredAt: deliveredAt },
         });
         return { outcome: "delivered", request: delivered };
       }

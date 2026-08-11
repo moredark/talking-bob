@@ -4,7 +4,27 @@ const { spawn, spawnSync } = require("node:child_process");
 
 const POSTGRES_IMAGE =
   "postgres:16.13-alpine3.23@sha256:4e6e670bb069649261c9c18031f0aded7bb249a5b6664ddec29c013a89310d50";
-const LATEST_MIGRATION = "20260808180000_prompt_selection_history";
+const LATEST_MIGRATION = "20260810160000_admin_analytics_facts";
+const ALL_MIGRATIONS = [
+  "20260118172424",
+  "20260124153443_add_conversation_messages",
+  "20260124160345_add_user_daily_prompt_settings",
+  "20260125000000_add_schedule_fields",
+  "20260128180643",
+  "20260128181852_add_admin_features",
+  "20260307110000_add_agent_tone",
+  "20260728120000_optional_prompt_audio",
+  "20260806120000_delivery_lifecycle",
+  "20260808120000_report_lifecycle",
+  "20260808140000_quota_windows",
+  "20260808160000_retention_and_error_correlation",
+  "20260808180000_prompt_selection_history",
+  "20260810120000_admin_audit_log",
+  "20260810130000_admin_session_inspection",
+  "20260810140000_admin_runtime_settings",
+  "20260810150000_admin_broadcasts",
+  "20260810160000_admin_analytics_facts",
+];
 const PRE_LIFECYCLE_MIGRATIONS = [
   "20260118172424",
   "20260124153443_add_conversation_messages",
@@ -217,11 +237,10 @@ function recoverySnapshot(targetDatabase) {
     targetDatabase,
     `
       SELECT jsonb_build_object(
-        'latest_migration', EXISTS (
-          SELECT 1 FROM "_prisma_migrations"
-          WHERE migration_name = '${LATEST_MIGRATION}'
-            AND finished_at IS NOT NULL
-            AND rolled_back_at IS NULL
+        'migrations', (
+          SELECT jsonb_agg(migration_name ORDER BY started_at, migration_name)
+          FROM "_prisma_migrations"
+          WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL
         ),
         'tables', (
           SELECT jsonb_agg(table_name ORDER BY table_name)
@@ -235,7 +254,31 @@ function recoverySnapshot(targetDatabase) {
             'user_prompts_scheduled_metadata_check',
             'report_delivery_requests_chunks_check',
             'quota_windows_window_range_check',
-            'user_responses_sensitive_data_purge_check'
+            'user_responses_sensitive_data_purge_check',
+            'admin_audit_logs_actor_id_sanitized_check',
+            'admin_audit_logs_actor_username_check',
+            'admin_audit_logs_action_check',
+            'admin_audit_logs_entity_type_check',
+            'admin_audit_logs_action_entity_check',
+            'admin_audit_logs_entity_id_sanitized_check',
+            'admin_audit_logs_outcome_check',
+            'admin_audit_logs_request_id_sanitized_check',
+            'admin_audit_logs_correlation_id_sanitized_check',
+            'admin_audit_logs_failure_code_check',
+            'admin_audit_logs_outcome_shape_check'
+            ,'broadcasts_filters_object_check'
+            ,'broadcasts_schedule_shape_check'
+            ,'broadcasts_counts_check'
+            ,'broadcasts_actor_check'
+            ,'broadcasts_terminal_shape_check'
+            ,'broadcasts_content_purge_shape_check'
+            ,'broadcast_recipients_attempt_count_check'
+            ,'broadcast_recipients_claim_shape_check'
+            ,'broadcast_recipients_sent_shape_check'
+            ,'broadcast_recipients_error_shape_check'
+            ,'admin_analytics_coverage_singleton_check'
+            ,'user_activity_days_shape_check'
+            ,'user_responses_overall_score_check'
           )
         ),
         'indexes', (
@@ -244,7 +287,24 @@ function recoverySnapshot(targetDatabase) {
           WHERE schemaname = 'public' AND indexname IN (
             'user_prompts_scheduledOccurrenceKey_unique',
             'conversation_messages_telegramUpdateId_key',
-            'report_delivery_requests_userResponseId_requestKey_key'
+            'report_delivery_requests_userResponseId_requestKey_key',
+            'admin_audit_logs_created_id_idx',
+            'admin_audit_logs_actor_created_id_idx',
+            'admin_audit_logs_entity_created_id_idx',
+            'admin_audit_logs_action_created_id_idx',
+            'admin_audit_logs_outcome_created_id_idx'
+            ,'broadcast_recipients_broadcastId_userId_key'
+            ,'broadcasts_dispatch_idx'
+            ,'broadcasts_created_id_idx'
+            ,'broadcasts_terminal_idx'
+            ,'broadcast_recipients_claim_idx'
+            ,'broadcast_recipients_detail_idx'
+            ,'broadcast_recipients_user_idx'
+            ,'user_prompts_sent_at_idx'
+            ,'user_prompts_first_user_message_at_idx'
+            ,'user_activity_days_local_date_user_idx'
+            ,'user_responses_generated_at_idx'
+            ,'user_responses_report_delivered_at_idx'
           )
         ),
         'counts', jsonb_build_object(
@@ -256,7 +316,15 @@ function recoverySnapshot(targetDatabase) {
           'report_delivery_requests', (SELECT COUNT(*) FROM report_delivery_requests),
           'user_requests', (SELECT COUNT(*) FROM user_requests),
           'quota_windows', (SELECT COUNT(*) FROM quota_windows),
-          'error_logs', (SELECT COUNT(*) FROM error_logs)
+          'error_logs', (SELECT COUNT(*) FROM error_logs),
+          'admin_audit_logs', (SELECT COUNT(*) FROM admin_audit_logs),
+          'runtime_settings', (SELECT COUNT(*) FROM runtime_settings),
+          'ai_provider_calls', (SELECT COUNT(*) FROM ai_provider_calls),
+          'admin_users', (SELECT COUNT(*) FROM admin_users)
+          ,'broadcasts', (SELECT COUNT(*) FROM broadcasts)
+          ,'broadcast_recipients', (SELECT COUNT(*) FROM broadcast_recipients)
+          ,'admin_analytics_coverage', (SELECT COUNT(*) FROM admin_analytics_coverage)
+          ,'user_activity_days', (SELECT COUNT(*) FROM user_activity_days)
         ),
         'timestamptz', jsonb_build_object(
           'users', COALESCE((
@@ -278,8 +346,43 @@ function recoverySnapshot(targetDatabase) {
           'quota_windows', COALESCE((
             SELECT jsonb_agg(jsonb_build_array(id, EXTRACT(EPOCH FROM "windowStart"), EXTRACT(EPOCH FROM "windowEnd")) ORDER BY id)
             FROM quota_windows
+          ), '[]'::jsonb),
+          'analytics_coverage', (
+            SELECT jsonb_build_array(id, EXTRACT(EPOCH FROM "completeFrom"), EXTRACT(EPOCH FROM "createdAt"))
+            FROM admin_analytics_coverage WHERE id = 'durable_facts'
+          ),
+          'admin_audit_logs', COALESCE((
+            SELECT jsonb_agg(jsonb_build_array(id, EXTRACT(EPOCH FROM "createdAt")) ORDER BY id)
+            FROM admin_audit_logs
+          ), '[]'::jsonb),
+          'report_delivery_requests', COALESCE((
+            SELECT jsonb_agg(jsonb_build_array(id, status, "nextChunkIndex", EXTRACT(EPOCH FROM "deliveredAt")) ORDER BY id)
+            FROM report_delivery_requests
+          ), '[]'::jsonb),
+          'ai_provider_calls', COALESCE((
+            SELECT jsonb_agg(jsonb_build_array(id, operation, outcome, "statusCode", "latencyMs", EXTRACT(EPOCH FROM "createdAt")) ORDER BY id)
+            FROM ai_provider_calls
+          ), '[]'::jsonb),
+          'admin_sessions', COALESCE((
+            SELECT jsonb_agg(jsonb_build_array(id, source, "deliveryStatus", "conversationStatus", "claimToken", EXTRACT(EPOCH FROM "contentPurgedAt"), EXTRACT(EPOCH FROM "aiTracePurgedAt")) ORDER BY id)
+            FROM user_prompts
           ), '[]'::jsonb)
-        )
+        ),
+        'runtime_settings', (
+          SELECT jsonb_build_object(
+            'id', id,
+            'product_overrides', "productOverrides",
+            'infrastructure_overrides', "infrastructureOverrides",
+            'product_version', "productVersion",
+            'infrastructure_version', "infrastructureVersion",
+            'updated_by_id', "updatedById",
+            'updated_by_username', "updatedByUsername"
+          ) FROM runtime_settings WHERE id = 'singleton'
+        ),
+        'admins', COALESCE((
+          SELECT jsonb_agg(jsonb_build_array(id, username, EXTRACT(EPOCH FROM "createdAt")) ORDER BY id)
+          FROM admin_users
+        ), '[]'::jsonb)
       )::text;
     `,
   );
@@ -287,7 +390,7 @@ function recoverySnapshot(targetDatabase) {
 }
 
 function verifyRecovery(source, restored) {
-  assert.equal(source.latest_migration, true);
+  assert.deepEqual(source.migrations, ALL_MIGRATIONS);
   assert.deepEqual(restored, source);
   for (const table of [
     "_prisma_migrations",
@@ -297,11 +400,19 @@ function verifyRecovery(source, restored) {
     "report_delivery_requests",
     "quota_windows",
     "error_logs",
+    "admin_audit_logs",
+    "runtime_settings",
+    "ai_provider_calls",
+    "admin_users",
+    "broadcasts",
+    "broadcast_recipients",
+    "admin_analytics_coverage",
+    "user_activity_days",
   ]) {
     assert.ok(source.tables.includes(table), `recovery snapshot is missing table ${table}`);
   }
-  assert.equal(source.constraints.length, 4);
-  assert.equal(source.indexes.length, 3);
+  assert.equal(source.constraints.length, 28);
+  assert.equal(source.indexes.length, 20);
 }
 
 async function verifyDumpAndRestore() {
@@ -325,6 +436,11 @@ async function verifyDumpAndRestore() {
   );
   assert.match(archiveList, /TABLE public users/);
   assert.match(archiveList, /TABLE public user_prompts/);
+  assert.match(archiveList, /TABLE public admin_audit_logs/);
+  assert.match(archiveList, /TABLE public broadcasts/);
+  assert.match(archiveList, /TABLE public broadcast_recipients/);
+  assert.match(archiveList, /TABLE public admin_analytics_coverage/);
+  assert.match(archiveList, /TABLE public user_activity_days/);
   assert.match(archiveList, /TABLE public _prisma_migrations/);
 
   createDatabase(restoreDatabase);
@@ -364,7 +480,8 @@ const LEGACY_FIXTURE_SQL = `
   );
   INSERT INTO user_prompts (id, "userId", "promptId", "sentAt") VALUES
     ('legacy-sent', 'legacy-user', 'legacy-prompt', TIMESTAMP '2026-03-08 07:31:00'),
-    ('legacy-ambiguous', 'legacy-user', 'legacy-prompt', TIMESTAMP '2026-03-08 08:31:00');
+    ('legacy-ambiguous', 'legacy-user', 'legacy-prompt', TIMESTAMP '2026-03-08 08:31:00'),
+    ('legacy-purged', 'legacy-user', 'legacy-prompt', TIMESTAMP '2026-07-01 09:00:00');
   INSERT INTO conversation_messages (
     id, "userPromptId", role, content, "createdAt"
   ) VALUES
@@ -376,6 +493,12 @@ const LEGACY_FIXTURE_SQL = `
   ) VALUES (
     'legacy-response', 'legacy-user', 'legacy-sent', 'legacy-voice', NULL,
     '{"summary":"legacy"}', TIMESTAMP '2026-03-08 07:35:00'
+  );
+  INSERT INTO user_responses (
+    id, "userId", "userPromptId", "voiceFileId", transcript, analysis, "createdAt"
+  ) VALUES (
+    'legacy-purged-response', 'legacy-user', 'legacy-purged', 'legacy-purged-voice', NULL,
+    NULL, TIMESTAMP '2026-07-01 09:05:00'
   );
   INSERT INTO user_requests (id, "userId", action, "createdAt") VALUES (
     'legacy-request', 'legacy-user', 'dialog_start', TIMESTAMP '2026-11-01 05:30:00'
@@ -396,7 +519,8 @@ function matrixSnapshot(targetDatabase) {
           'user', (
             SELECT jsonb_build_object(
               'last_prompt_ms', EXTRACT(EPOCH FROM "lastPromptSentAt") * 1000,
-              'next_prompt_is_null', "nextPromptAt" IS NULL
+              'next_prompt_is_null', "nextPromptAt" IS NULL,
+              'announcement_enabled', "announcementEnabled"
             ) FROM users WHERE id = 'legacy-user'
           ),
           'prompts', (
@@ -409,7 +533,8 @@ function matrixSnapshot(targetDatabase) {
               'attempted_ms', EXTRACT(EPOCH FROM "deliveryAttemptedAt") * 1000,
               'error_code', "lastDeliveryErrorCode",
               'conversation_status', "conversationStatus",
-              'closed_ms', EXTRACT(EPOCH FROM "conversationClosedAt") * 1000
+              'closed_ms', EXTRACT(EPOCH FROM "conversationClosedAt") * 1000,
+              'first_user_message_ms', EXTRACT(EPOCH FROM "firstUserMessageAt") * 1000
             ) ORDER BY id)
             FROM user_prompts WHERE "userId" = 'legacy-user'
           ),
@@ -433,6 +558,16 @@ function matrixSnapshot(targetDatabase) {
             FROM user_requests ur
             JOIN quota_windows qw ON qw.id = ur."quotaWindowId"
             WHERE ur.id = 'legacy-request'
+          ),
+          'purged_activity_count', (
+            SELECT COUNT(*) FROM user_activity_days
+            WHERE "userId" = 'legacy-user' AND "localDate" = DATE '2026-07-01'
+          ),
+          'analytics_coverage', (
+            SELECT jsonb_build_object(
+              'complete_from_ms', EXTRACT(EPOCH FROM "completeFrom") * 1000,
+              'after_purged_fixture', "completeFrom" > TIMESTAMPTZ '2026-07-01 09:00:00+00'
+            ) FROM admin_analytics_coverage WHERE id = 'durable_facts'
           ),
           'error_created_ms', (
             SELECT EXTRACT(EPOCH FROM "createdAt") * 1000
@@ -491,16 +626,25 @@ async function verifyLegacyTimezoneMatrix(port) {
       await prepareLegacyMatrixDatabase(entry.database, entry.timezone, port),
     );
   }
+  for (const snapshot of snapshots) {
+    assert.ok(Number.isFinite(Number(snapshot.analytics_coverage.complete_from_ms)));
+    snapshot.analytics_coverage.complete_from_ms = "normalized-migration-instant";
+  }
   assert.deepEqual(snapshots[1], snapshots[0]);
 
   const snapshot = snapshots[0];
   assert.equal(snapshot.latest_migration, true);
   assert.equal(snapshot.user.next_prompt_is_null, true);
+  assert.equal(snapshot.user.announcement_enabled, true);
   assert.equal(Number(snapshot.user.last_prompt_ms), Date.parse("2026-03-08T07:30:00.000Z"));
-  assert.equal(snapshot.prompts.length, 2);
+  assert.equal(snapshot.prompts.length, 3);
   const ambiguous = snapshot.prompts.find(({ id }) => id === "legacy-ambiguous");
   assert.equal(ambiguous.delivery_status, "pending");
   assert.equal(ambiguous.error_code, "legacy_unknown");
+  const purged = snapshot.prompts.find(({ id }) => id === "legacy-purged");
+  assert.equal(purged.first_user_message_ms, null);
+  assert.equal(Number(snapshot.purged_activity_count), 0);
+  assert.equal(snapshot.analytics_coverage.after_purged_fixture, true);
   const sent = snapshot.prompts.find(({ id }) => id === "legacy-sent");
   assert.equal(sent.delivery_status, "sent");
   assert.equal(sent.conversation_status, "closed");
@@ -540,6 +684,8 @@ async function main() {
   const databaseUrl = databaseUrlFor(database, port);
   const env = { ...process.env, DATABASE_URL: databaseUrl };
   await migrate(databaseUrl);
+  await run(process.execPath, ["--test", "integration/admin-analytics.integration.js"], env);
+  await run(process.execPath, ["--test", "integration/admin-mvp.integration.js"], env);
   await run(process.execPath, ["--test", "integration/postgres-critical-invariants.integration.js"], env);
   await verifyDumpAndRestore();
   await verifyLegacyTimezoneMatrix(port);

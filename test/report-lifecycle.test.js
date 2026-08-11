@@ -23,6 +23,7 @@ function createFakePrisma(seed = {}) {
     conversationMessages: (seed.conversationMessages || []).map(copy),
     userResponses: (seed.userResponses || []).map(copy),
     reportDeliveryRequests: (seed.reportDeliveryRequests || []).map(copy),
+    userActivityDays: (seed.userActivityDays || []).map(copy),
     operations: [],
   };
   const sequences = { message: 0, response: 0, delivery: 0 };
@@ -62,6 +63,7 @@ function createFakePrisma(seed = {}) {
         conversationMessages: structuredClone(state.conversationMessages),
         userResponses: structuredClone(state.userResponses),
         reportDeliveryRequests: structuredClone(state.reportDeliveryRequests),
+        userActivityDays: structuredClone(state.userActivityDays),
       };
       try {
         const result = await callback(client);
@@ -74,6 +76,23 @@ function createFakePrisma(seed = {}) {
         state.operations.push({ type: "transaction", phase: "rollback" });
         throw error;
       }
+    },
+    async $executeRaw(query, ...taggedValues) {
+      const values = taggedValues;
+      const [userId, localDateValue, firstActivityAt, lastActivityAt] = values;
+      const localDate = typeof localDateValue === "string"
+        ? new Date(localDateValue + "T00:00:00.000Z")
+        : localDateValue;
+      const existing = state.userActivityDays.find((row) => row.userId === userId && row.localDate.getTime() === localDate.getTime());
+      if (existing) {
+        existing.firstActivityAt = new Date(Math.min(existing.firstActivityAt.getTime(), firstActivityAt.getTime()));
+        existing.lastActivityAt = new Date(Math.max(existing.lastActivityAt.getTime(), lastActivityAt.getTime()));
+        existing.messageCount += 1;
+      } else {
+        state.userActivityDays.push({ userId, localDate, firstActivityAt, lastActivityAt, messageCount: 1 });
+      }
+      state.operations.push({ type: "execute", model: "userActivityDay", text: sqlText(query), values });
+      return 1;
     },
     async $queryRaw(query, ...taggedValues) {
       const text = sqlText(query);
@@ -106,7 +125,20 @@ function createFakePrisma(seed = {}) {
       }
       throw new Error(`unexpected SQL: ${text}`);
     },
+    user: {
+      async updateMany({ where, data }) {
+        state.operations.push({ type: "updateMany", model: "user", where, data });
+        return { count: 1 };
+      },
+    },
     userPrompt: {
+      async updateMany({ where, data }) {
+        const row = state.userPrompts.find((item) => item.id === where.id);
+        if (!row) return { count: 0 };
+        Object.assign(row, data);
+        state.operations.push({ type: "updateMany", model: "userPrompt", id: row.id, data });
+        return { count: 1 };
+      },
       async findUnique({ where }) {
         return returnRow(state.userPrompts.find((row) => row.id === where.id));
       },
@@ -207,6 +239,8 @@ function createFakePrisma(seed = {}) {
           lastGenerationErrorAt: null,
           analysisVersion: null,
           analysisKind: null,
+          overallScore: null,
+          reportDeliveredAt: null,
           createdAt: now(),
           ...data,
         };
@@ -222,12 +256,13 @@ function createFakePrisma(seed = {}) {
         return returnRow(row);
       },
       async updateMany({ where, data }) {
-        const matches = state.userResponses.filter(
-          (row) =>
-            row.id === where.id &&
-            row.generationStatus === where.generationStatus &&
-            row.generationClaimToken === where.generationClaimToken,
-        );
+        const matches = state.userResponses.filter((row) => {
+          if (row.id !== where.id) return false;
+          if (where.generationStatus !== undefined && row.generationStatus !== where.generationStatus) return false;
+          if (where.generationClaimToken !== undefined && row.generationClaimToken !== where.generationClaimToken) return false;
+          if (where.OR && row.reportDeliveredAt !== null && row.reportDeliveredAt !== undefined && !(row.reportDeliveredAt < where.OR[1].reportDeliveredAt.lt)) return false;
+          return true;
+        });
         matches.forEach((row) => Object.assign(row, data));
         state.operations.push({ type: "updateMany", model: "userResponse", count: matches.length });
         return { count: matches.length };
@@ -272,6 +307,12 @@ function createFakePrisma(seed = {}) {
         state.reportDeliveryRequests.push(row);
         state.operations.push({ type: "create", model: "reportDeliveryRequest", id: row.id });
         return returnRow(row);
+      },
+      async updateMany({ where, data }) {
+        const rows = state.userPrompts.filter((row) => row.id === where.id);
+        rows.forEach((row) => Object.assign(row, data));
+        state.operations.push({ type: "updateMany", model: "userPrompt", count: rows.length, data });
+        return { count: rows.length };
       },
       async update({ where, data }) {
         const row = findDelivery(where);
@@ -332,6 +373,8 @@ function generatingResponse(overrides = {}) {
     lastGenerationErrorAt: null,
     analysisVersion: null,
     analysisKind: null,
+    overallScore: null,
+    reportDeliveredAt: null,
     createdAt: new Date(),
     ...overrides,
   };
@@ -384,6 +427,13 @@ test("voice acceptance deduplicates before the closed gate and the third voice c
   assert.equal(fake.state.userResponses[0].generationRequestKey, "auto-3");
   assert.equal(fake.state.userPrompts[0].conversationStatus, "closed");
   assert.ok(fake.state.userPrompts[0].conversationClosedAt instanceof Date);
+  assert.ok(fake.state.userPrompts[0].firstUserMessageAt instanceof Date);
+  assert.equal(fake.state.userActivityDays.length, 1);
+  assert.equal(fake.state.userActivityDays[0].messageCount, 3);
+  const activityWrites = fake.state.operations.filter((operation) => operation.type === "execute" && operation.model === "userActivityDay");
+  assert.equal(activityWrites.length, 3);
+  assert.ok(activityWrites.every((operation) => operation.text.includes("?::date")));
+  assert.ok(activityWrites.every((operation) => /^\d{4}-\d{2}-\d{2}$/.test(operation.values[1])));
   assert.equal(
     fake.state.operations.filter(
       (operation) => operation.type === "create" && operation.model === "userResponse",
@@ -532,6 +582,7 @@ test("expired generation is reclaimed, fences the old token, and failed request 
     analysis: "stale analysis",
     analysisVersion: 2,
     analysisKind: "model",
+    overallScore: 8,
     chunks: ["stale delivery"],
   });
   assert.equal(staleCompletion.outcome, "stale");
@@ -575,6 +626,7 @@ test("generation completion atomically saves report metadata and creates the ini
     analysis: "Good use of the past tense.",
     analysisVersion: 2,
     analysisKind: "model",
+    overallScore: 8,
     chunks: ["part one", "part two"],
   };
 
@@ -606,6 +658,7 @@ test("generation completion atomically saves report metadata and creates the ini
       status: fake.state.userResponses[0].generationStatus,
       version: fake.state.userResponses[0].analysisVersion,
       kind: fake.state.userResponses[0].analysisKind,
+      score: fake.state.userResponses[0].overallScore,
       token: fake.state.userResponses[0].generationClaimToken,
     },
     {
@@ -614,6 +667,7 @@ test("generation completion atomically saves report metadata and creates the ini
       status: "generated",
       version: 2,
       kind: "model",
+      score: 8,
       token: null,
     },
   );
@@ -719,6 +773,7 @@ test("a begun delivery is ambiguous until its exact attempt advances the cursor 
   assert.equal(final.outcome, "delivered");
   assert.equal(final.request.nextChunkIndex, 2);
   assert.ok(final.request.deliveredAt instanceof Date);
+  assert.ok(fake.state.userResponses[0].reportDeliveredAt instanceof Date);
   const delivered = await service.createOrClaimDeliveryRequest(
     "response-seed",
     "delivery-key",

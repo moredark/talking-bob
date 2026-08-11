@@ -5,7 +5,7 @@ Admin запускается в Docker за nginx и публикуется то
 
 ```text
 Tailscale Serve -> 127.0.0.1:8080 -> admin nginx
-                                      |-- /*      -> React SPA
+                                      |-- /*      -> Vue 3 SPA
                                       `-- /api/*  -> app:3000/*
 ```
 
@@ -115,3 +115,21 @@ sudo tailscale serve reset
 
 Официальная документация Serve:
 <https://tailscale.com/docs/reference/tailscale-cli/serve>.
+
+## Admin MVP staging smoke
+
+После локальных gates проверьте через tailnet прямые deep links:
+`/sessions`, `/settings`, `/broadcasts/new` и `/audit-logs`. Все они
+должны вернуть SPA, а запросы браузера — идти в same-origin `/api`.
+
+Используйте отдельного admin и только тестовых пользователей:
+
+- login и повторный запрос с истёкшим JWT;
+- audit/session detail без секретов в list и audit metadata;
+- reversible runtime override/reset;
+- broadcast preview/create для opted-in fixture и отдельный opt-out fixture;
+- analytics и предупреждение о неполном историческом покрытии после upgrade;
+- controlled restart/reclaim без duplicate Telegram delivery.
+
+Запишите commit, immutable image digests, migration, UTC-время и результат.
+Локальный `/healthz` или production image build не считается staging evidence.

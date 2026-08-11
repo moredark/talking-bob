@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { Prisma } = require("@prisma/client");
+const { installRuntimeSettings } = require("./support/runtime-settings-test-harness");
 
 const { DEFAULT_USER_TIMEZONE } = require("../dist/config/limits.config");
 const {
@@ -8,6 +9,7 @@ const {
   getCalendarDayRange,
 } = require("../dist/modules/rate-limit/rate-limit.service");
 
+installRuntimeSettings(RateLimitService);
 test("getCalendarDayRange returns exact Moscow UTC boundaries", () => {
   const now = new Date("2024-01-15T13:45:00Z");
   const range = getCalendarDayRange("Europe/Moscow", now);

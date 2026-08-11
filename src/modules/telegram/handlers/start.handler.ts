@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { Context } from "grammy";
 import { RATE_LIMITS } from "../../../config/limits.config";
 import { PromptService } from "../../prompt";
+import { RuntimeSettingsService } from "../../../config/runtime-settings.service";
 import { RateLimitService } from "../../rate-limit";
 import {
   IMessageDispatcher,
@@ -20,6 +21,7 @@ const WELCOME_MESSAGE = `Привет! Я Talking Bob — бот для прак
 @Injectable()
 export class StartHandler {
   private readonly logger = new Logger(StartHandler.name);
+  @Inject(RuntimeSettingsService) private readonly settings!: RuntimeSettingsService;
 
   constructor(
     private readonly userService: UserService,
@@ -64,15 +66,16 @@ export class StartHandler {
       return;
     }
 
+    const dialogsPerDay = this.settings.productNumber("DIALOGS_PER_DAY");
     const admission = await this.rateLimitService.consumeCalendarDayLimit(
       user.id,
       "dialog_start",
       user.timezone,
-      RATE_LIMITS.dialog_start.maxRequests,
+      dialogsPerDay,
     );
     if (!admission.allowed) {
       await ctx.reply(
-        `Лимит новых диалогов на сегодня исчерпан (${RATE_LIMITS.dialog_start.maxRequests}). Попробуйте завтра.`,
+        `Лимит новых диалогов на сегодня исчерпан (${dialogsPerDay}). Попробуйте завтра.`,
       );
       return;
     }

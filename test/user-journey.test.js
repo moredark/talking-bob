@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
+const { installRuntimeSettings } = require("./support/runtime-settings-test-harness");
 const { UserService } = require("../dist/modules/user/user.service");
 const { PromptService } = require("../dist/modules/prompt/prompt.service");
 const { ScheduleService } = require("../dist/modules/schedule/schedule.service");
@@ -18,6 +19,7 @@ const {
   SettingsHandler,
 } = require("../dist/modules/telegram/handlers/settings.handler");
 const { createInMemoryPrisma } = require("../testing/in-memory-prisma");
+installRuntimeSettings(StartHandler, VoiceHandler);
 
 function voiceContext(updateId, transcriptIndex, replies, telegram) {
   return {

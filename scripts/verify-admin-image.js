@@ -1,0 +1,212 @@
+const assert = require("node:assert/strict");
+const { randomBytes } = require("node:crypto");
+const { spawn } = require("node:child_process");
+
+const runId = randomBytes(8).toString("hex");
+const label = `talking-bob.admin-image-check=${runId}`;
+const tag = `talking-bob-admin-check:${runId}`;
+const containerName = `talking-bob-admin-check-${runId}`;
+const upstreamName = `talking-bob-admin-upstream-${runId}`;
+const networkName = `talking-bob-admin-network-${runId}`;
+const activeChildren = new Set();
+let imageOwned = false;
+let containerOwned = false;
+let upstreamOwned = false;
+let networkOwned = false;
+let shuttingDown = false;
+
+const BUILD_TIMEOUT_MS = 10 * 60_000;
+const RUN_TIMEOUT_MS = 60_000;
+const CLEANUP_TIMEOUT_MS = 30_000;
+const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
+
+function run(command, args, { capture = false, timeoutMs = RUN_TIMEOUT_MS, allowFailure = false } = {}) {
+  return new Promise((resolve, reject) => {
+    const stdout = [];
+    const stderr = [];
+    const child = spawn(command, args, {
+      stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
+      env: process.env,
+    });
+    activeChildren.add(child);
+    if (capture) {
+      child.stdout.on("data", (chunk) => stdout.push(chunk));
+      child.stderr.on("data", (chunk) => stderr.push(chunk));
+    }
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+    }, timeoutMs);
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      activeChildren.delete(child);
+      reject(error);
+    });
+    child.once("exit", (code, signal) => {
+      clearTimeout(timeout);
+      activeChildren.delete(child);
+      const result = {
+        code,
+        signal,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+      };
+      if (timedOut) reject(new Error(`${command} ${args[0] || ""} timed out after ${timeoutMs}ms`));
+      else if (code === 0 || allowFailure) resolve(result);
+      else reject(new Error(result.stderr.trim() || `${command} failed (${signal || `exit ${code}`})`));
+    });
+  });
+}
+
+function docker(args, options) {
+  return run("docker", args, options);
+}
+
+async function ownedContainerExists() {
+  const inspected = await docker([
+    "inspect", "--format",
+    "{{.Name}}|{{index .Config.Labels \"talking-bob.admin-image-check\"}}",
+    containerName,
+  ], { capture: true, allowFailure: true, timeoutMs: CLEANUP_TIMEOUT_MS });
+  if (inspected.code !== 0) return false;
+  assert.equal(inspected.stdout.trim(), `/${containerName}|${runId}`, "refusing to manage an unowned container");
+  return true;
+}
+
+async function ownedImageExists() {
+  const inspected = await docker([
+    "image", "inspect", "--format",
+    "{{index .Config.Labels \"talking-bob.admin-image-check\"}}|{{json .RepoTags}}",
+    tag,
+  ], { capture: true, allowFailure: true, timeoutMs: CLEANUP_TIMEOUT_MS });
+  if (inspected.code !== 0) return false;
+  const separator = inspected.stdout.indexOf("|");
+  assert.equal(inspected.stdout.slice(0, separator).trim(), runId, "refusing to manage an unowned image");
+  assert.ok(JSON.parse(inspected.stdout.slice(separator + 1)).includes(tag), "owned image tag is missing");
+  return true;
+}
+
+async function ownedNamedResourceExists(kind, name) {
+  const inspected = await docker([
+    kind, "inspect", "--format",
+    "{{index .Labels \"talking-bob.admin-image-check\"}}",
+    name,
+  ], { capture: true, allowFailure: true, timeoutMs: CLEANUP_TIMEOUT_MS });
+  if (inspected.code !== 0) return false;
+  assert.equal(inspected.stdout.trim(), runId, `refusing to manage an unowned ${kind}`);
+  return true;
+}
+
+async function cleanup() {
+  if (containerOwned && await ownedContainerExists()) {
+    await docker(["rm", "--force", containerName], {
+      capture: true, allowFailure: true, timeoutMs: CLEANUP_TIMEOUT_MS,
+    });
+  }
+  containerOwned = false;
+  if (upstreamOwned && await ownedNamedResourceExists("container", upstreamName)) {
+    await docker(["rm", "--force", upstreamName], {
+      capture: true, allowFailure: true, timeoutMs: CLEANUP_TIMEOUT_MS,
+    });
+  }
+  upstreamOwned = false;
+  if (networkOwned && await ownedNamedResourceExists("network", networkName)) {
+    await docker(["network", "rm", networkName], {
+      capture: true, allowFailure: true, timeoutMs: CLEANUP_TIMEOUT_MS,
+    });
+  }
+  networkOwned = false;
+  if (imageOwned && await ownedImageExists()) {
+    await docker(["image", "rm", tag], {
+      capture: true, allowFailure: true, timeoutMs: CLEANUP_TIMEOUT_MS,
+    });
+  }
+  imageOwned = false;
+}
+
+async function waitForReady() {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const result = await docker([
+      "exec", containerName, "wget", "-q", "-O", "-", "http://127.0.0.1:8080/healthz",
+    ], { capture: true, allowFailure: true });
+    if (result.code === 0 && result.stdout.trim() === "ok") return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  const [adminLogs, upstreamLogs] = await Promise.all([
+    docker(["logs", containerName], { capture: true, allowFailure: true }),
+    docker(["logs", upstreamName], { capture: true, allowFailure: true }),
+  ]);
+  throw new Error([
+    "Admin image did not become healthy within 30 seconds",
+    `admin logs: ${adminLogs.stderr || adminLogs.stdout}`,
+    `upstream logs: ${upstreamLogs.stderr || upstreamLogs.stdout}`,
+  ].join("\n"));
+}
+
+async function main() {
+  await docker(["info"], { capture: true });
+  assert.equal(await ownedImageExists(), false, `image tag already exists: ${tag}`);
+  imageOwned = true;
+  await docker([
+    "build", "--target", "runtime", "--label", label, "--tag", tag, "admin",
+  ], { timeoutMs: BUILD_TIMEOUT_MS });
+  await docker(["network", "create", "--label", label, networkName], { capture: true });
+  networkOwned = true;
+  const upstreamConfig = "pid /tmp/upstream.pid; error_log /dev/stderr notice; events {} http { access_log /dev/stdout; client_body_temp_path /tmp/client_temp; server { listen 3000; location = /rollout-probe { default_type application/json; return 200 '{\"source\":\"owned-upstream\"}'; } } }";
+  await docker([
+    "run", "--detach", "--name", upstreamName, "--hostname", "app",
+    "--network", networkName, "--label", label, "--entrypoint", "sh", tag,
+    "-c", `printf '%s' \"${upstreamConfig.replaceAll('"', '\\\"')}\" > /tmp/upstream.conf && exec nginx -c /tmp/upstream.conf -g 'daemon off;'`,
+  ], { capture: true });
+  upstreamOwned = true;
+  await docker([
+    "run", "--detach", "--name", containerName, "--label", label,
+    "--network", networkName, "--env", "PORT=3000", tag,
+  ], { capture: true });
+  containerOwned = true;
+  await waitForReady();
+
+  const identity = await docker([
+    "exec", containerName, "sh", "-c", "id -u; test ! -e /usr/src/admin/src; test ! -e /usr/src/admin/node_modules",
+  ], { capture: true });
+  assert.notEqual(identity.stdout.trim(), "0", "Admin runtime must not run as root");
+
+  const root = await docker([
+    "exec", containerName, "wget", "-q", "-O", "-", "http://127.0.0.1:8080/",
+  ], { capture: true });
+  const deepLink = await docker([
+    "exec", containerName, "wget", "-q", "-O", "-", "http://127.0.0.1:8080/broadcasts/new",
+  ], { capture: true });
+  assert.match(root.stdout, /<div id="app"><\/div>/);
+  assert.equal(deepLink.stdout, root.stdout, "Admin SPA deep links must fall back to index.html");
+
+  const proxied = await docker([
+    "exec", containerName, "wget", "-q", "-O", "-", "http://127.0.0.1:8080/api/rollout-probe",
+  ], { capture: true });
+  assert.deepEqual(JSON.parse(proxied.stdout), { source: "owned-upstream" });
+  process.stdout.write("Admin production image verification passed.\n");
+}
+
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  for (const child of activeChildren) child.kill(signal);
+  try {
+    await cleanup();
+  } finally {
+    process.exit(SIGNAL_EXIT_CODES[signal] ?? 1);
+  }
+}
+
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.once(signal, () => { void shutdown(signal); });
+}
+
+main()
+  .catch((error) => {
+    process.stderr.write(`${error.stack || error}\n`);
+    process.exitCode = 1;
+  })
+  .finally(cleanup);

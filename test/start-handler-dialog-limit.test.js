@@ -1,9 +1,11 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
+const { installRuntimeSettings } = require("./support/runtime-settings-test-harness");
 const {
   StartHandler,
 } = require("../dist/modules/telegram/handlers/start.handler");
+installRuntimeSettings(StartHandler);
 
 const user = {
   id: "user-1",

@@ -10,6 +10,7 @@ const REQUIRED = {
   DATABASE_URL: "postgresql://user:secret@localhost:5432/talking_bob",
   TELEGRAM_BOT_TOKEN: "123456:secret-token",
   CLOUD_RU_API_KEY: "secret-cloud-key",
+  JWT_SECRET: "test-jwt-secret",
 };
 
 test("runtime config parses required values and bounded defaults", () => {
@@ -18,6 +19,7 @@ test("runtime config parses required values and bounded defaults", () => {
   assert.equal(config.databaseUrl, REQUIRED.DATABASE_URL);
   assert.equal(config.server.port, 3000);
   assert.equal(config.concurrency.telegramUpdates, 4);
+  assert.equal(config.jwtSecret, REQUIRED.JWT_SECRET);
   assert.equal(config.concurrency.aiRequests, 2);
   assert.equal(config.concurrency.aiRequestMaxPending, 8);
   assert.equal(config.voice.maxFileSizeBytes, 20 * 1024 * 1024);
@@ -93,10 +95,19 @@ test("runtime config treats blank required values as missing", () => {
         DATABASE_URL: " ",
         TELEGRAM_BOT_TOKEN: "",
         CLOUD_RU_API_KEY: "\t",
+        JWT_SECRET: "",
       }),
     (error) => {
-      assert.equal(error.issues.length, 3);
+      assert.equal(error.issues.length, 4);
       return true;
     },
+  );
+});
+
+test("runtime config rejects the retired public JWT fallback", () => {
+  assert.throws(
+    () => parseRuntimeConfig({ ...REQUIRED, JWT_SECRET: "default-secret-change-me" }),
+    (error) => error instanceof RuntimeConfigError
+      && error.issues.includes("JWT_SECRET must not use the retired public fallback"),
   );
 });

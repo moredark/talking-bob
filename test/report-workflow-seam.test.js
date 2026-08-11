@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { MODULE_METADATA } = require("@nestjs/common/constants");
+const { installRuntimeSettings } = require("./support/runtime-settings-test-harness");
 
 const { ReportHandler } = require("../dist/modules/telegram/handlers/report.handler");
 const { VoiceHandler } = require("../dist/modules/telegram/handlers/voice.handler");
@@ -8,6 +9,7 @@ const { TelegramModule } = require("../dist/modules/telegram/telegram.module");
 const {
   ReportWorkflowService,
 } = require("../dist/modules/telegram/report-workflow.service");
+installRuntimeSettings(VoiceHandler);
 
 test("ReportHandler delegates generateClaimedReport to an injected workflow", async () => {
   const unexpectedCall = () => {

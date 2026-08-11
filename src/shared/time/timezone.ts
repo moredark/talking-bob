@@ -24,6 +24,10 @@ export interface CalendarDayRange {
   end: Date;
 }
 
+export interface CalendarDayBucket extends CalendarDayRange {
+  localDate: string;
+}
+
 interface LocalDateTimeParts extends LocalDateParts {
   hour: number;
   minute: number;
@@ -182,6 +186,29 @@ export function getCalendarDayRange(
       effectiveTimeZone,
     ),
   };
+}
+
+/** Oldest-first calendar-day buckets ending with the day containing `now`. */
+export function getCalendarDayBuckets(
+  days: number,
+  timeZone: string,
+  now: Date = new Date(),
+): CalendarDayBucket[] {
+  assertValidDate(now);
+  if (!Number.isInteger(days) || days < 1 || days > 3650) {
+    throw new RangeError("days must be an integer from 1 through 3650");
+  }
+
+  const effectiveTimeZone = resolveEffectiveTimeZone(timeZone).timeZone;
+  const today = getLocalDateParts(now, effectiveTimeZone);
+  return Array.from({ length: days }, (_value, index) => {
+    const localDate = addCalendarDays(today, index - days + 1);
+    return {
+      localDate: formatLocalDate(localDate),
+      start: resolveWallClock(localDate, 0, 0, effectiveTimeZone),
+      end: resolveWallClock(addCalendarDays(localDate, 1), 0, 0, effectiveTimeZone),
+    };
+  });
 }
 
 function findNextSlot(

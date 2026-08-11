@@ -1,10 +1,10 @@
 # Admin и операционный контур
 
-Административная часть разделена на защищённый API внутри NestJS и отдельное React/Vite-приложение. Health endpoints принадлежат backend и используются оркестратором независимо от Admin SPA.
+Административная часть разделена на защищённый API внутри NestJS и отдельное Vue 3/Vite-приложение. Health endpoints принадлежат backend и используются оркестратором независимо от Admin SPA.
 
 ```mermaid
 flowchart LR
-    browser[Браузер администратора] --> spa["Admin SPA<br/>React + Vite"]
+    browser[Браузер администратора] --> spa["Admin SPA<br/>Vue 3 + Vite"]
     spa -->|POST /auth/login| auth[AuthModule]
     spa -->|Bearer JWT, /admin/*| admin[AdminModule]
     admin --> auth
@@ -52,3 +52,21 @@ flowchart LR
 - Одновременный запуск нескольких polling-инстансов не поддерживается текущей архитектурой.
 
 Практические команды, проверки health, backup/restore и действия при сбоях находятся в [операционном руководстве](../operations.md). Эта страница фиксирует только границы и связи, не заменяя runbook.
+
+## Admin MVP
+
+- Все `/admin/*` маршруты защищены Bearer JWT; audit log хранит
+  санитизированные metadata и фиксируется атомарно с мутацией.
+- Session inspection связывает полный диалог, генерацию, доставку, ошибки и
+  санитизированные AI provider calls. AI traces очищаются через 30 дней.
+- Runtime settings используют typed allowlist: product overrides применяются
+  hot, infrastructure overrides — после restart, readonly/secrets не изменяются.
+- Broadcast dispatcher хранит snapshot аудитории, повторно проверяет opt-out
+  перед Telegram I/O и использует bounded claims/retries.
+- Analytics возвращает Moscow calendar buckets и retention-safe facts без raw
+  сообщений, transcript, analysis или provider response.
+
+Admin runtime — непривилегированный nginx: он раздаёт собранную SPA, делает
+fallback на `index.html` для deep links и проксирует same-origin `/api/*` в
+backend. Production overlay принимает immutable Admin image digest и публикует
+порт только на loopback для Tailscale Serve.

@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
+const { installRuntimeSettings } = require("./support/runtime-settings-test-harness");
 const {
   AiRequestLimiterService,
 } = require("../dist/modules/ai/services/ai-request-limiter.service");
@@ -21,6 +22,7 @@ const {
 const {
   DailyPromptDispatcher,
 } = require("../dist/modules/schedule/daily-prompt.dispatcher");
+installRuntimeSettings(LLMService, DataRetentionService, VoiceHandler);
 
 function createErrorLogSubject({ create } = {}) {
   const creates = [];
@@ -299,6 +301,7 @@ test("full voice flow preserves update correlation without logging token, transc
   const providerBody = "upstream body contains private diagnostics";
   const { creates, observability, service: errorLog } = createErrorLogSubject();
   const replies = [];
+  let followUpTrace;
   const handler = new VoiceHandler(
     {
       findByTelegramId: async () => ({
@@ -337,7 +340,8 @@ test("full voice flow preserves update correlation without logging token, transc
       transcribe: async () => ({ text: transcript, language: "en" }),
     },
     {
-      generateFollowUp: async (history) => {
+      generateFollowUp: async (history, _topic, _tone, trace) => {
+        followUpTrace = trace;
         assert.equal(history[0].content, transcript);
         throw new BoundedHttpError("network", 1, {
           cause: new Error(`${providerBody}; token=${token}`),
@@ -397,6 +401,7 @@ test("full voice flow preserves update correlation without logging token, transc
   }
 
   assert.equal(creates.length, 1);
+  assert.equal(followUpTrace.correlationId, "tg-full-voice-8123");
   const data = creates[0].data;
   assert.equal(data.correlationId, "tg-full-voice-8123");
   assert.equal(data.metadata.telegramUpdateId, "8123");
@@ -423,6 +428,10 @@ test("DataRetentionService applies fixed cutoffs and purges only old closed cont
   const calls = [];
   const count = (value) => ({ count: value });
   const tx = {
+    aiProviderCall: { findMany: async (query) => { calls.push(["aiProviderCall.findMany", query]); return []; }, deleteMany: async (query) => { calls.push(["aiProviderCall.deleteMany", query]); return count(0); } },
+    broadcast: { findMany: async () => [], updateMany: async () => count(), deleteMany: async () => count() },
+    broadcastRecipient: { deleteMany: async () => count() },
+    userPrompt: { updateMany: async (query) => { calls.push(["userPrompt.updateMany", query]); return count(8); } },
     reportDeliveryRequest: {
       deleteMany: async (query) => {
         calls.push(["reportDeliveryRequest.deleteMany", query]);
@@ -459,6 +468,12 @@ test("DataRetentionService applies fixed cutoffs and purges only old closed cont
         return count(6);
       },
     },
+    adminAuditLog: {
+      deleteMany: async (query) => {
+        calls.push(["adminAuditLog.deleteMany", query]);
+        return count(7);
+      },
+    },
   };
   const prisma = { $transaction: async (callback) => callback(tx) };
   const service = new DataRetentionService(prisma, {
@@ -468,15 +483,27 @@ test("DataRetentionService applies fixed cutoffs and purges only old closed cont
       errorLogsDays: 14,
     },
   });
+  service.settings = {
+    productNumber: (key) => ({
+      RETENTION_CLOSED_CONVERSATION_CONTENT_DAYS: 7,
+      RETENTION_RATE_LIMIT_DAYS: 30,
+      RETENTION_ERROR_LOGS_DAYS: 14,
+    })[key],
+  };
   const now = new Date("2026-08-08T12:00:00.000Z");
 
   assert.deepEqual(await service.cleanup(now), {
     reportDeliveryRequests: 2,
+    aiProviderCalls: 0,
+    userPrompts: 8,
     conversationMessages: 3,
     userResponses: 1,
     userRequests: 4,
     quotaWindows: 5,
     errorLogs: 6,
+    adminAuditLogs: 7,
+    broadcastRecipients: 0,
+    broadcasts: 0,
   });
 
   const oldClosed = {
@@ -484,6 +511,7 @@ test("DataRetentionService applies fixed cutoffs and purges only old closed cont
     conversationClosedAt: { lt: new Date("2026-08-01T12:00:00.000Z") },
   };
   assert.deepEqual(calls, [
+    ["aiProviderCall.findMany", { where: { createdAt: { lt: new Date("2026-07-09T12:00:00.000Z") } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], take: 500, select: { id: true, userPromptId: true } }],
     ["reportDeliveryRequest.deleteMany", {
       where: { userResponse: { userPrompt: oldClosed } },
     }],
@@ -499,6 +527,7 @@ test("DataRetentionService applies fixed cutoffs and purges only old closed cont
         sensitiveDataPurgedAt: now,
       },
     }],
+    ["userPrompt.updateMany", { where: { ...oldClosed, contentPurgedAt: null }, data: { contentPurgedAt: now } }],
     ["userRequest.deleteMany", {
       where: {
         createdAt: { lt: new Date("2026-07-09T12:00:00.000Z") },
@@ -517,7 +546,49 @@ test("DataRetentionService applies fixed cutoffs and purges only old closed cont
     ["errorLog.deleteMany", {
       where: { createdAt: { lt: new Date("2026-07-25T12:00:00.000Z") } },
     }],
+    ["adminAuditLog.deleteMany", {
+      where: { createdAt: { lt: new Date("2025-08-08T12:00:00.000Z") } },
+    }],
   ]);
+});
+
+test("DataRetentionService removes only audit rows older than 365 days and is idempotent", async () => {
+  const now = new Date("2026-08-10T12:00:00.000Z");
+  const rows = [
+    { id: "old", createdAt: new Date("2025-08-10T11:59:59.999Z") },
+    { id: "boundary", createdAt: new Date("2025-08-10T12:00:00.000Z") },
+    { id: "new", createdAt: new Date("2026-08-10T11:00:00.000Z") },
+  ];
+  const count = (value = 0) => ({ count: value });
+  const tx = {
+    reportDeliveryRequest: { deleteMany: async () => count() },
+    aiProviderCall: { findMany: async () => [], deleteMany: async () => count() },
+    broadcast: { findMany: async () => [], updateMany: async () => count(), deleteMany: async () => count() },
+    broadcastRecipient: { deleteMany: async () => count() },
+    userPrompt: { updateMany: async () => count() },
+    conversationMessage: { deleteMany: async () => count() },
+    userResponse: { updateMany: async () => count() },
+    userRequest: { deleteMany: async () => count() },
+    quotaWindow: { deleteMany: async () => count() },
+    errorLog: { deleteMany: async () => count() },
+    adminAuditLog: {
+      deleteMany: async ({ where }) => {
+        const before = rows.length;
+        for (let index = rows.length - 1; index >= 0; index -= 1) {
+          if (rows[index].createdAt < where.createdAt.lt) rows.splice(index, 1);
+        }
+        return count(before - rows.length);
+      },
+    },
+  };
+  const service = new DataRetentionService(
+    { $transaction: async (callback) => callback(tx) },
+    { retention: { closedConversationContentDays: 30, rateLimitDays: 30, errorLogsDays: 30 } },
+  );
+
+  assert.equal((await service.cleanup(now)).adminAuditLogs, 1);
+  assert.equal((await service.cleanup(now)).adminAuditLogs, 0);
+  assert.deepEqual(rows.map(({ id }) => id), ["boundary", "new"]);
 });
 
 test("DataRetentionService preserves an old request while its 25-hour quota window is active", async () => {
@@ -533,6 +604,10 @@ test("DataRetentionService preserves an old request while its 25-hour quota wind
   const tx = {
     reportDeliveryRequest: { deleteMany: async () => count() },
     conversationMessage: { deleteMany: async () => count() },
+    aiProviderCall: { findMany: async () => [], deleteMany: async () => count() },
+    broadcast: { findMany: async () => [], updateMany: async () => count(), deleteMany: async () => count() },
+    broadcastRecipient: { deleteMany: async () => count() },
+    userPrompt: { updateMany: async () => count() },
     userResponse: { updateMany: async () => count() },
     userRequest: {
       deleteMany: async ({ where }) => {
@@ -545,6 +620,7 @@ test("DataRetentionService preserves an old request while its 25-hour quota wind
     },
     quotaWindow: { deleteMany: async () => count() },
     errorLog: { deleteMany: async () => count() },
+    adminAuditLog: { deleteMany: async () => count() },
   };
   const service = new DataRetentionService(
     { $transaction: async (callback) => callback(tx) },

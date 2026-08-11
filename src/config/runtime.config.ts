@@ -9,6 +9,7 @@ export interface RuntimeConfig {
   databaseUrl: string;
   telegramBotToken: string;
   cloudRuApiKey: string;
+  jwtSecret: string;
   server: {
     port: number;
   };
@@ -73,6 +74,10 @@ export function parseRuntimeConfig(
   const databaseUrl = required(env, "DATABASE_URL", issues);
   const telegramBotToken = required(env, "TELEGRAM_BOT_TOKEN", issues);
   const cloudRuApiKey = required(env, "CLOUD_RU_API_KEY", issues);
+  const jwtSecret = required(env, "JWT_SECRET", issues);
+  if (jwtSecret === "default-secret-change-me") {
+    issues.push("JWT_SECRET must not use the retired public fallback");
+  }
 
   if (databaseUrl && !isUrl(databaseUrl, ["postgres:", "postgresql:"])) {
     issues.push("DATABASE_URL must be a valid PostgreSQL URL");
@@ -85,6 +90,9 @@ export function parseRuntimeConfig(
     issues.push("LLM_API_URL must be a valid HTTP(S) URL");
   }
   const llmModel = optional(env, "LLM_MODEL") || "zai-org/GLM-4.7";
+  if (llmModel.length > 160 || /[\u0000-\u001f\u007f]/.test(llmModel)) {
+    issues.push("LLM_MODEL must be a trimmed control-free string of at most 160 characters");
+  }
 
   const number = (name: string, rule: NumberRule): number => {
     const raw = optional(env, name);
@@ -182,7 +190,7 @@ export function parseRuntimeConfig(
   });
 
   const config: RuntimeConfig = {
-    databaseUrl,
+    databaseUrl, jwtSecret,
     telegramBotToken,
     cloudRuApiKey,
     server: { port },
