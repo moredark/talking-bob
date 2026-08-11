@@ -6,6 +6,7 @@ import {
 } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database";
 import { getLocalDateKey } from "../../shared/time/timezone";
+import { StreakService } from "../streak";
 
 const GENERATION_LEASE_MS = 30 * 60 * 1000;
 
@@ -47,7 +48,10 @@ export type GuardedAssistantResult =
 
 @Injectable()
 export class ConversationService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly streakService: StreakService,
+  ) {}
 
   /** Cheap read-only gate. The locked accept method is authoritative. */
   async precheckVoiceAcceptance(
@@ -136,6 +140,11 @@ export class ConversationService {
           where: { id: data.userPromptId },
           data: { conversationStatus: "closed", conversationClosedAt: now },
         });
+        const streak = await this.streakService.qualifyConversation({
+          userId: data.userId,
+          userPromptId: data.userPromptId,
+          qualifiedAt: now,
+        }, tx);
         const firstUserMessage = await tx.conversationMessage.findFirst({
           where: {
             userPromptId: data.userPromptId,
@@ -158,6 +167,9 @@ export class ConversationService {
               generationClaimToken: claimToken,
               generationClaimExpiresAt: claimExpiresAt,
               generationAttemptedAt: now,
+              streakCurrentSnapshot: streak.currentStreak,
+              streakLongestSnapshot: streak.longestStreak,
+              streakIsNewRecord: streak.isNewRecord,
             },
           });
           generationClaim = { responseId: response.id, userId: data.userId, userPromptId: data.userPromptId, claimToken, claimExpiresAt };

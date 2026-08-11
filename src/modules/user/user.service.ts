@@ -38,6 +38,11 @@ export class UserService {
           0,
           DEFAULT_USER_TIMEZONE,
         ).instant,
+        currentStreak: 0,
+        longestStreak: 0,
+        streakReminderEnabled: true,
+        streakReminderHour: 21,
+        streakReminderMinute: 0,
       },
     });
   }
@@ -84,6 +89,11 @@ export class UserService {
             0,
             DEFAULT_USER_TIMEZONE,
           ).instant,
+          currentStreak: 0,
+          longestStreak: 0,
+          streakReminderEnabled: true,
+          streakReminderHour: 21,
+          streakReminderMinute: 0,
         },
       });
     } catch (error) {

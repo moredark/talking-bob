@@ -8,6 +8,19 @@ const {
   ResponseService,
 } = require("../dist/modules/response/response.service");
 
+function createStreakStub(overrides = {}) {
+  return {
+    qualifyConversation: async () => ({
+      currentStreak: 1,
+      longestStreak: 1,
+      isNewRecord: true,
+      localDate: new Date("2026-08-08T00:00:00.000Z"),
+      expiresAt: new Date("2026-08-10T00:00:00.000Z"),
+    }),
+    ...overrides,
+  };
+}
+
 function copy(row) {
   if (!row) return row;
   return { ...row, chunks: Array.isArray(row.chunks) ? [...row.chunks] : row.chunks };
@@ -400,7 +413,7 @@ function lockTexts(fake) {
 
 test("voice acceptance deduplicates before the closed gate and the third voice closes and claims once", async () => {
   const fake = createFakePrisma({ userPrompts: [prompt()] });
-  const service = new ConversationService(fake);
+  const service = new ConversationService(fake, createStreakStub());
 
   const first = await service.acceptVoiceAndMaybeClaimGeneration(voiceData(1));
   const second = await service.acceptVoiceAndMaybeClaimGeneration(voiceData(2));
@@ -469,7 +482,7 @@ test("third voice rolls back its message and prompt closure when response creati
   });
 
   await assert.rejects(
-    new ConversationService(fake).acceptVoiceAndMaybeClaimGeneration(voiceData(3)),
+    new ConversationService(fake, createStreakStub()).acceptVoiceAndMaybeClaimGeneration(voiceData(3)),
     /injected response create failure/,
   );
 
@@ -490,8 +503,15 @@ test("manual-first and auto-first serialization both produce exactly one generat
     userPrompts: [prompt()],
     conversationMessages: [message()],
   });
-  const manualResponse = new ResponseService(manualFake);
-  const manualConversation = new ConversationService(manualFake);
+  const manualQualifications = [];
+  const manualStreak = createStreakStub({
+    qualifyConversation: async (data) => {
+      manualQualifications.push(data);
+      return { currentStreak: 4, longestStreak: 6, isNewRecord: false };
+    },
+  });
+  const manualResponse = new ResponseService(manualFake, manualStreak);
+  const manualConversation = new ConversationService(manualFake, manualStreak);
   const manual = await manualResponse.claimGeneration({
     userId: "user-1",
     userPromptId: "prompt-1",
@@ -503,10 +523,26 @@ test("manual-first and auto-first serialization both produce exactly one generat
   assert.equal(manual.outcome, "claimed");
   assert.equal(afterManual.outcome, "closed");
   assert.equal(manualFake.state.userResponses.length, 1);
+  assert.equal(manualQualifications.length, 1);
+  assert.deepEqual(
+    {
+      current: manualFake.state.userResponses[0].streakCurrentSnapshot,
+      longest: manualFake.state.userResponses[0].streakLongestSnapshot,
+      record: manualFake.state.userResponses[0].streakIsNewRecord,
+    },
+    { current: 4, longest: 6, record: false },
+  );
 
   const autoFake = createFakePrisma({ userPrompts: [prompt()] });
-  const autoConversation = new ConversationService(autoFake);
-  const autoResponse = new ResponseService(autoFake);
+  const autoQualifications = [];
+  const autoStreak = createStreakStub({
+    qualifyConversation: async (data) => {
+      autoQualifications.push(data);
+      return { currentStreak: 7, longestStreak: 7, isNewRecord: true };
+    },
+  });
+  const autoConversation = new ConversationService(autoFake, autoStreak);
+  const autoResponse = new ResponseService(autoFake, autoStreak);
   await autoConversation.acceptVoiceAndMaybeClaimGeneration(voiceData(1));
   await autoConversation.acceptVoiceAndMaybeClaimGeneration(voiceData(2));
   const auto = await autoConversation.acceptVoiceAndMaybeClaimGeneration(voiceData(3));
@@ -522,6 +558,15 @@ test("manual-first and auto-first serialization both produce exactly one generat
   assert.equal(afterAuto.outcome, "busy");
   assert.equal(afterAuto.response.id, auto.generationClaim.responseId);
   assert.equal(autoFake.state.userResponses.length, 1);
+  assert.equal(autoQualifications.length, 1);
+  assert.deepEqual(
+    {
+      current: autoFake.state.userResponses[0].streakCurrentSnapshot,
+      longest: autoFake.state.userResponses[0].streakLongestSnapshot,
+      record: autoFake.state.userResponses[0].streakIsNewRecord,
+    },
+    { current: 7, longest: 7, record: true },
+  );
   assert.ok(
     lockTexts(autoFake).some((text) => /FROM "user_responses".*"userPromptId".*FOR UPDATE/.test(text)),
   );
@@ -529,7 +574,7 @@ test("manual-first and auto-first serialization both produce exactly one generat
 
 test("manual generation rejects empty dialogs and reports an active lease as busy", async () => {
   const emptyFake = createFakePrisma({ userPrompts: [prompt()] });
-  const emptyService = new ResponseService(emptyFake);
+  const emptyService = new ResponseService(emptyFake, createStreakStub());
   const empty = await emptyService.claimGeneration({
     userId: "user-1",
     userPromptId: "prompt-1",
@@ -545,7 +590,7 @@ test("manual generation rejects empty dialogs and reports an active lease as bus
     conversationMessages: [message()],
     userResponses: [generatingResponse()],
   });
-  const busy = await new ResponseService(busyFake).claimGeneration({
+  const busy = await new ResponseService(busyFake, createStreakStub()).claimGeneration({
     userId: "user-1",
     userPromptId: "prompt-1",
     voiceFileId: "voice-1",
@@ -565,7 +610,7 @@ test("expired generation is reclaimed, fences the old token, and failed request 
       generatingResponse({ generationClaimExpiresAt: new Date(Date.now() - 1_000) }),
     ],
   });
-  const service = new ResponseService(fake);
+  const service = new ResponseService(fake, createStreakStub());
   const reclaimed = await service.claimGeneration({
     userId: "user-1",
     userPromptId: "prompt-1",
@@ -618,7 +663,7 @@ test("generation completion atomically saves report metadata and creates the ini
     userResponses: [generatingResponse({ generationRequestKey: "generation-key" })],
     deliveryCreateFailures: 1,
   });
-  const service = new ResponseService(fake);
+  const service = new ResponseService(fake, createStreakStub());
   const completion = {
     responseId: "response-seed",
     claimToken: "old-token",
@@ -689,7 +734,7 @@ test("a begun delivery is ambiguous until its exact attempt advances the cursor 
       generatingResponse({ generationStatus: "generated", generationClaimToken: null }),
     ],
   });
-  const service = new ResponseService(fake);
+  const service = new ResponseService(fake, createStreakStub());
   const initial = await service.createOrClaimDeliveryRequest(
     "response-seed",
     "delivery-key",
@@ -789,7 +834,7 @@ test("definite and ambiguous delivery failures diverge, while a new key permits 
       generatingResponse({ generationStatus: "generated", generationClaimToken: null }),
     ],
   });
-  const service = new ResponseService(fake);
+  const service = new ResponseService(fake, createStreakStub());
 
   const definite = await service.createOrClaimDeliveryRequest(
     "response-seed",

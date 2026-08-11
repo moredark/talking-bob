@@ -25,7 +25,7 @@ Updates одного чата проходят последовательно; �
 | `new_question` | `StartHandler.handleNewQuestion` | тот же flow без welcome |
 | voice message | `VoiceHandler` | User, Prompt, Conversation, RateLimit, Whisper, LLM, ReportWorkflow |
 | `/report`, `report` callback | `ReportHandler` | Admission, Response claim, ReportWorkflow |
-| `/settings` и settings callbacks | `SettingsHandler` | User, Schedule |
+| `/settings` и settings callbacks | `SettingsHandler` | User, Schedule, Streak |
 
 Handlers связывают Telegram update с application-сценарием. Общая для auto и
 manual report логика вынесена в `ReportWorkflowService`: генерация, подготовка
@@ -83,7 +83,9 @@ conversation state. Только затем он занимает rolling quota,
 - добавляет user message;
 - для первых двух turns оставляет conversation открытым;
 - на третьем turn закрывает conversation и, если owner ещё отсутствует, создаёт
-  `UserResponse` с initial generation claim.
+  `UserResponse` с initial generation claim;
+- квалифицирует локальный streak-день и записывает response snapshot в той же
+  транзакции закрытия.
 
 Для первых двух turns LLM строит follow-up по сохранённой истории.
 `addAssistantMessageIfOpen` записывает ответ только если conversation ещё
@@ -96,6 +98,7 @@ sequenceDiagram
     participant V as VoiceHandler
     participant Q as RateLimitService
     participant C as ConversationService
+    participant S as StreakService
     participant W as Whisper
     participant L as LLM
     participant R as ReportWorkflowService
@@ -114,6 +117,8 @@ sequenceDiagram
         V->>C: addAssistantMessageIfOpen
         V->>TG: reply follow-up
     else turn 3
+        C->>S: qualifyConversation(tx)
+        S->>DB: lock User + day/aggregate/reminder/snapshot
         V->>R: generateClaimedReport(claim)
     end
 ```
@@ -132,6 +137,14 @@ turn `VoiceHandler` вызывает тот же workflow напрямую; hand
 его через `ResponseService.claimGeneration`. Unique relation и row locks
 сериализуют оба пути. Один владелец получает lease token; остальные видят
 `busy`, уже сохранённый результат или terminal failure данного request key.
+
+Если manual `/report` закрывает ещё открытый разговор, `ResponseService` в той
+же транзакции вызывает `StreakService.qualifyConversation`. Обе ветки поэтому
+создают максимум один `StreakDay`, обновляют user aggregate и сохраняют в
+`UserResponse` значения current/longest и флаг нового рекорда. Повторный report
+для уже закрытой сессии не квалифицирует день заново. Snapshot добавляется в
+форматированный отчёт независимо от того, насколько позже завершатся LLM и
+Telegram delivery.
 
 После LLM analysis отчёт форматируется как plain text, делится на Telegram-safe
 chunks и в одной транзакции переводится в `generated` вместе с первой delivery

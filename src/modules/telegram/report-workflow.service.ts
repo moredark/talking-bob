@@ -40,7 +40,12 @@ export class ReportWorkflowService {
         userResponseId: claim.responseId, requestId: claim.responseId,
         correlationId: this.observability?.current()?.correlationId,
       } : undefined);
-      const chunks = chunkReportOutput(formatReportOutput(feedback, transcript));
+      const response = await this.responseService.getResponseById(claim.responseId);
+      const chunks = chunkReportOutput(formatReportOutput(
+        feedback,
+        transcript,
+        this.streakSnapshot(response),
+      ));
       const completed = await this.responseService.completeGeneration({
         responseId: claim.responseId, claimToken: claim.claimToken, transcript,
         analysis: JSON.stringify(feedback), analysisVersion: feedback.version,
@@ -69,11 +74,22 @@ export class ReportWorkflowService {
 
   async deliverPersisted(
     ctx: Context,
-    response: { id: string; transcript: string | null; analysis: string | null },
+    response: {
+      id: string;
+      transcript: string | null;
+      analysis: string | null;
+      streakCurrentSnapshot?: number | null;
+      streakLongestSnapshot?: number | null;
+      streakIsNewRecord?: boolean | null;
+    },
     requestKey: string,
   ): Promise<void> {
     try {
-      const chunks = chunkReportOutput(formatReportOutput(this.parseFeedback(response.analysis), response.transcript ?? ""));
+      const chunks = chunkReportOutput(formatReportOutput(
+        this.parseFeedback(response.analysis),
+        response.transcript ?? "",
+        this.streakSnapshot(response),
+      ));
       const result = await this.responseService.createOrClaimDeliveryRequest(response.id, requestKey, chunks);
       if (result.outcome === "claimed") await this.deliver(ctx, result.claim);
       if (result.outcome === "failed" || result.outcome === "ambiguous") {
@@ -177,6 +193,19 @@ export class ReportWorkflowService {
       kind: candidate.kind === "model" || candidate.kind === "fallback" || candidate.kind === "legacy"
         ? candidate.kind
         : undefined,
+    };
+  }
+
+  private streakSnapshot(response: {
+    streakCurrentSnapshot?: number | null;
+    streakLongestSnapshot?: number | null;
+    streakIsNewRecord?: boolean | null;
+  } | null): { current: number; longest: number; isNewRecord: boolean } | null {
+    if (!response || !response.streakCurrentSnapshot) return null;
+    return {
+      current: response.streakCurrentSnapshot,
+      longest: response.streakLongestSnapshot ?? response.streakCurrentSnapshot,
+      isNewRecord: response.streakIsNewRecord === true,
     };
   }
 

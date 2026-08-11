@@ -4,7 +4,7 @@ const { spawn, spawnSync } = require("node:child_process");
 
 const POSTGRES_IMAGE =
   "postgres:16.13-alpine3.23@sha256:4e6e670bb069649261c9c18031f0aded7bb249a5b6664ddec29c013a89310d50";
-const LATEST_MIGRATION = "20260810160000_admin_analytics_facts";
+const LATEST_MIGRATION = "20260811120000_add_streaks";
 const ALL_MIGRATIONS = [
   "20260118172424",
   "20260124153443_add_conversation_messages",
@@ -24,6 +24,7 @@ const ALL_MIGRATIONS = [
   "20260810140000_admin_runtime_settings",
   "20260810150000_admin_broadcasts",
   "20260810160000_admin_analytics_facts",
+  "20260811120000_add_streaks",
 ];
 const PRE_LIFECYCLE_MIGRATIONS = [
   "20260118172424",

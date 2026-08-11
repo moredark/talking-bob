@@ -23,6 +23,7 @@ import {
 } from "../ai";
 import { DailyPromptDispatcher } from "../schedule";
 import { BroadcastDispatcher } from "../broadcast";
+import { StreakReminderDispatcher } from "../streak";
 import { ErrorLogService, ObservabilityContextService } from "../error-log";
 import { ReportHandler } from "./handlers/report.handler";
 import { SettingsHandler } from "./handlers/settings.handler";
@@ -68,6 +69,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     private readonly reportHandler: ReportHandler,
     private readonly settingsHandler: SettingsHandler,
     private readonly dailyPromptDispatcher: DailyPromptDispatcher,
+    private readonly streakReminderDispatcher: StreakReminderDispatcher,
     @Inject(RUNTIME_CONFIG) private readonly runtimeConfig: RuntimeConfig,
     @Optional() private readonly aiRequestLimiter?: AiRequestLimiterService,
     private readonly errorLog?: ErrorLogService,
@@ -91,6 +93,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   onModuleInit(): void {
     this.registerHandlers();
     this.dailyPromptDispatcher.setBot(this.bot);
+    this.streakReminderDispatcher.setBot(this.bot);
     this.broadcastDispatcher?.setSender({
       sendPlainText: async (telegramId, content, signal) => {
         await this.bot.api.sendMessage(telegramId.toString(), content, undefined, signal);
@@ -170,6 +173,15 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     );
     this.bot.callbackQuery(/^set_time_\d+_\d+$/, (ctx) =>
       this.settingsHandler.handleTimeSelect(ctx, ctx.callbackQuery.data),
+    );
+    this.bot.callbackQuery("toggle_streak_reminder", (ctx) =>
+      this.settingsHandler.handleStreakReminderToggle(ctx),
+    );
+    this.bot.callbackQuery(/^set_streak_time_\d+_\d+$/, (ctx) =>
+      this.settingsHandler.handleStreakReminderTimeSelect(
+        ctx,
+        ctx.callbackQuery.data,
+      ),
     );
     this.bot.callbackQuery(/^set_tone_(friendly|playful)$/, (ctx) =>
       this.settingsHandler.handleToneSelect(ctx, ctx.callbackQuery.data),

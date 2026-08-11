@@ -9,6 +9,7 @@ import {
   ScheduleSettings,
   ScheduleSettingsOperations,
 } from "./schedule-settings.operations";
+import { StreakService } from "../streak";
 
 export { PROMPT_REPEAT_WINDOW } from "./schedule-claims.operations";
 export type { ScheduleSettings } from "./schedule-settings.operations";
@@ -20,8 +21,17 @@ export class ScheduleService implements OnModuleInit {
   private readonly claimsOperations: ScheduleClaimsOperations;
   private readonly deliveryOperations: ScheduleDeliveryOperations;
 
-  constructor(prisma: PrismaService) {
-    this.settingsOperations = new ScheduleSettingsOperations(prisma);
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly streakService?: StreakService,
+  ) {
+    this.settingsOperations = new ScheduleSettingsOperations(
+      prisma,
+      streakService
+        ? (tx, user, now) =>
+            streakService.rescheduleForTimezoneInTransaction(tx, user, now)
+        : undefined,
+    );
     this.claimsOperations = new ScheduleClaimsOperations(prisma);
     this.deliveryOperations = new ScheduleDeliveryOperations(prisma);
   }
@@ -59,7 +69,11 @@ export class ScheduleService implements OnModuleInit {
     settings: ScheduleSettings,
     now = new Date(),
   ): Promise<User> {
-    return this.settingsOperations.updateScheduleSettings(userId, settings, now);
+    return this.settingsOperations.updateScheduleSettings(
+      userId,
+      settings,
+      now,
+    );
   }
 
   async initializeSchedule(

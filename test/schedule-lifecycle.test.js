@@ -265,6 +265,76 @@ test("settings lock, canonicalization, and next slot update share one transactio
   );
 });
 
+test("timezone schedule update and streak reschedule share rollback and one transaction client", async () => {
+  const now = new Date("2026-08-06T12:00:00.000Z");
+  const initial = {
+    id: "user-1",
+    dailyPromptEnabled: true,
+    dailyPromptHour: 13,
+    dailyPromptMinute: 0,
+    timezone: "Europe/Moscow",
+    nextPromptAt: new Date("2026-08-07T10:00:00.000Z"),
+  };
+
+  for (const failStreak of [false, true]) {
+    const state = { user: { ...initial }, streakRescheduled: false };
+    let transactions = 0;
+    let tx;
+    const prisma = {
+      user: {
+        findUnique: async () => state.user,
+      },
+      $transaction: async (callback) => {
+        transactions += 1;
+        const snapshot = structuredClone(state);
+        tx = {
+          $queryRaw: async () => [{ ...state.user }],
+          user: {
+            findUnique: async () => state.user,
+            update: async ({ data }) => Object.assign(state.user, data),
+          },
+          streakReminder: {
+            updateMany: async () => ({ count: 0 }),
+            createMany: async () => ({ count: 0 }),
+          },
+        };
+        try {
+          return await callback(tx);
+        } catch (error) {
+          state.user = snapshot.user;
+          state.streakRescheduled = snapshot.streakRescheduled;
+          throw error;
+        }
+      },
+    };
+    const streak = {
+      rescheduleForTimezoneInTransaction: async (...args) => {
+        assert.ok(args.includes(tx), "streak receives the schedule transaction client");
+        state.streakRescheduled = true;
+        if (failStreak) throw new Error("streak reschedule failed");
+        return state.user;
+      },
+    };
+    const service = new ScheduleService(prisma, streak);
+    const operation = service.updateScheduleSettings(
+      "user-1",
+      { timezone: "America/Los_Angeles" },
+      now,
+    );
+
+    if (failStreak) {
+      await assert.rejects(operation, /streak reschedule failed/);
+      assert.deepEqual(state.user, initial);
+      assert.equal(state.streakRescheduled, false);
+    } else {
+      const updated = await operation;
+      assert.equal(updated.timezone, "America/Los_Angeles");
+      assert.equal(state.streakRescheduled, true);
+    }
+    assert.equal(transactions, 1);
+  }
+});
+
 test("disabling a schedule atomically clears nextPromptAt", async () => {
   const locked = {
     id: "user-1",

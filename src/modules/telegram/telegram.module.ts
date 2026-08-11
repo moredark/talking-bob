@@ -15,6 +15,7 @@ import { AiModule } from "../ai";
 import { ScheduleModule } from "../schedule";
 import { ReportWorkflowService } from "./report-workflow.service";
 import { BroadcastModule } from "../broadcast";
+import { StreakModule } from "../streak";
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { BroadcastModule } from "../broadcast";
     AiModule,
     ScheduleModule,
     BroadcastModule,
+    StreakModule,
   ],
   providers: [
     TelegramService,

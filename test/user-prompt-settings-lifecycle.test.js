@@ -214,6 +214,7 @@ test("settings display uses canonical effective timezone and actual schedule sta
         }),
       },
       {},
+      { getStatus: async () => null },
     );
 
     await handler.handle({

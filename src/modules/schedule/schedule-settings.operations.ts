@@ -36,8 +36,17 @@ export interface ScheduleSettings {
   timezone?: string | null;
 }
 
+export type TimezoneTransition = (
+  tx: Prisma.TransactionClient,
+  user: User,
+  now: Date,
+) => Promise<User>;
+
 export class ScheduleSettingsOperations {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly timezoneTransition?: TimezoneTransition,
+  ) {}
 
   async normalizeAllSchedules(
     batchSize = DEFAULT_BATCH_SIZE,
@@ -231,7 +240,7 @@ export class ScheduleSettingsOperations {
         ? nextSlotAtOrAfter(now, hour, minute, timezone).instant
         : null;
 
-      return tx.user.update({
+      let updated = await tx.user.update({
         where: { id: userId },
         data: {
           dailyPromptEnabled: enabled,
@@ -241,6 +250,13 @@ export class ScheduleSettingsOperations {
           nextPromptAt,
         },
       });
+      if (
+        this.timezoneTransition &&
+        resolveEffectiveTimeZone(locked.timezone).timeZone !== timezone
+      ) {
+        updated = await this.timezoneTransition(tx, updated, now);
+      }
+      return updated;
     });
   }
 

@@ -178,7 +178,15 @@ export class AdminAuditService {
       if (typeof source.hasTextContent === "boolean") result.hasTextContent = source.hasTextContent;
       if (typeof source.hasAudioFileId === "boolean") result.hasAudioFileId = source.hasAudioFileId;
     } else if (action === "user.reset_progress") {
-      for (const key of ["reportDeliveryRequests", "userActivityDays", "conversationMessages", "userResponses", "userPrompts"] as const) {
+      for (const key of [
+        "streakReminders",
+        "streakDays",
+        "reportDeliveryRequests",
+        "userActivityDays",
+        "conversationMessages",
+        "userResponses",
+        "userPrompts",
+      ] as const) {
         const count = this.nonNegativeInt(source[key]);
         if (count !== null) result[key] = count;
       }

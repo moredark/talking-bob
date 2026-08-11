@@ -74,17 +74,44 @@ export class AdminUsersService {
   async resetUserProgress(id: string): Promise<boolean> {
     if (!await this.prisma.user.findUnique({ where: { id } })) return false;
     return this.audit.runSuccess({ action: "user.reset_progress", entityType: "user" }, async (tx) => {
+      await tx.$queryRaw(Prisma.sql`
+        SELECT "id"
+        FROM "user_prompts"
+        WHERE "userId" = ${id}
+        ORDER BY "id"
+        FOR UPDATE
+      `);
+      await tx.$queryRaw(Prisma.sql`
+        SELECT "id"
+        FROM "users"
+        WHERE "id" = ${id}
+        FOR UPDATE
+      `);
+      const streakReminders = await tx.streakReminder.deleteMany({ where: { userId: id } });
+      const streakDays = await tx.streakDay.deleteMany({ where: { userId: id } });
       const reportDeliveryRequests = await tx.reportDeliveryRequest.deleteMany({ where: { userResponse: { userId: id } } });
       await tx.aiProviderCall.deleteMany({ where: { userId: id } });
       const userActivityDays = await tx.userActivityDay.deleteMany({ where: { userId: id } });
       const conversationMessages = await tx.conversationMessage.deleteMany({ where: { userPrompt: { userId: id } } });
       const userResponses = await tx.userResponse.deleteMany({ where: { userId: id } });
       const userPrompts = await tx.userPrompt.deleteMany({ where: { userId: id } });
-      await tx.user.update({ where: { id }, data: { lastUserMessageAt: null } });
+      await tx.user.update({
+        where: { id },
+        data: {
+          lastUserMessageAt: null,
+          currentStreak: 0,
+          longestStreak: 0,
+          lastStreakLocalDate: null,
+          streakExpiresAt: null,
+          nextStreakReminderAt: null,
+        },
+      });
       return {
         result: true,
         entityId: id,
         after: {
+          streakReminders: streakReminders.count,
+          streakDays: streakDays.count,
           reportDeliveryRequests: reportDeliveryRequests.count,
           userActivityDays: userActivityDays.count,
           conversationMessages: conversationMessages.count,

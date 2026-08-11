@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database";
+import { StreakQualification, StreakService } from "../streak";
 import {
   ClaimGenerationData,
   ClaimGenerationResult,
@@ -12,7 +13,10 @@ const GENERATION_LEASE_MS = 30 * 60 * 1000;
 const DELIVERY_LEASE_MS = 2 * 60 * 1000;
 
 export class ResponseGenerationOperations {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly streakService: StreakService,
+  ) {}
 
   /** Claims manual generation, reclaims failed/expired work, or returns saved output. */
   async claimGeneration(data: ClaimGenerationData): Promise<ClaimGenerationResult> {
@@ -24,11 +28,17 @@ export class ResponseGenerationOperations {
       });
       if (userMessageCount === 0) return { outcome: "no_messages" };
       const now = new Date();
+      let streak: StreakQualification | null = null;
       if (prompt.conversationStatus === "open") {
         await tx.userPrompt.update({
           where: { id: data.userPromptId },
           data: { conversationStatus: "closed", conversationClosedAt: now },
         });
+        streak = await this.streakService.qualifyConversation({
+          userId: data.userId,
+          userPromptId: data.userPromptId,
+          qualifiedAt: now,
+        }, tx);
       }
 
       await this.lockResponseByPrompt(tx, data.userPromptId);
@@ -68,6 +78,11 @@ export class ResponseGenerationOperations {
               lastGenerationErrorAt: null,
               analysisVersion: null,
               analysisKind: null,
+              ...(streak ? {
+                streakCurrentSnapshot: streak.currentStreak,
+                streakLongestSnapshot: streak.longestStreak,
+                streakIsNewRecord: streak.isNewRecord,
+              } : {}),
             },
           })
         : await tx.userResponse.create({
@@ -79,6 +94,9 @@ export class ResponseGenerationOperations {
               generationClaimToken: claimToken,
               generationClaimExpiresAt: claimExpiresAt,
               generationAttemptedAt: now,
+              streakCurrentSnapshot: streak?.currentStreak,
+              streakLongestSnapshot: streak?.longestStreak,
+              streakIsNewRecord: streak?.isNewRecord,
             },
           });
       return {

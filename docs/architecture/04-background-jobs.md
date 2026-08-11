@@ -69,6 +69,49 @@ Dispatcher сначала фиксирует начало попытки, зат
 `new_question` создают claim через тот же `ScheduleService` и отправляются тем
 же dispatcher, но admission выполняют заранее.
 
+## Напоминания о стрике
+
+`StreakReminderScheduler` запускается каждую минуту. `StreakService` выбирает
+due `streak_reminders` батчами через `FOR UPDATE ... SKIP LOCKED`, выдаёт
+двухминутную lease и допускает reclaim только пока Telegram attempt ещё не
+начат либо после явного retry-safe отказа. `StreakReminderDispatcher` получает
+активный grammY bot от `TelegramService`.
+
+```mermaid
+sequenceDiagram
+    participant C as StreakReminderScheduler
+    participant S as StreakService
+    participant DB as PostgreSQL
+    participant D as StreakReminderDispatcher
+    participant TG as Telegram API
+
+    C->>S: claimDueReminders(now)
+    S->>DB: expire overdue + claim due rows
+    loop каждый claim
+        C->>D: dispatch(claim)
+        D->>S: beginReminderAttempt(claim)
+        S->>DB: lock User затем reminder + eligibility fence
+        alt eligible
+            D->>TG: sendMessage
+            D->>S: sent / retryable / terminal outcome
+        else уже не eligible
+            S->>DB: cancelled или expired
+        end
+    end
+```
+
+Последняя проверка перед Telegram I/O требует включённую настройку, активный
+ненулевой streak, rescue-день сразу после последней квалификации, отсутствие
+`StreakDay` сегодня и непросроченные user/reminder deadlines. Закрытие диалога,
+выключение reminder, смена времени или timezone отменяют ещё не начатые stale
+rows и пересчитывают `nextStreakReminderAt`.
+
+Определённые Telegram `429` и `5xx` повторяются с exponential backoff от одной
+минуты до одного часа, только если следующая попытка раньше локальной полуночи.
+Остальные definite ошибки и transport/unknown outcomes терминальны. Перед I/O
+сохраняется `deliveryAttemptedAt`, поэтому неоднозначный outcome не может быть
+автоматически отправлен второй раз после рестарта.
+
 ## Rate limits и quota windows
 
 Rolling quotas атомарно потребляются через `RateLimitService.consumeLimit`.
@@ -114,8 +157,8 @@ attempt markers и idempotency keys, а ephemeral replies завершаются
 - Соблюдайте единый порядок row locks, чтобы не создавать deadlock между manual
   и scheduled flow.
 - Проверяйте изменения через `test/schedule-lifecycle.test.js`,
-  `test/daily-prompt-dispatcher.test.js`, calendar quota tests и
-  `npm run test:postgres`.
+  `test/daily-prompt-dispatcher.test.js`, `test/streak-lifecycle.test.js`,
+  calendar quota tests и `npm run test:postgres`.
 
 Связанные документы: [Telegram flow](03-telegram-conversation.md),
 [данные и состояния](05-data-and-state.md), [operations runbook](../operations.md).

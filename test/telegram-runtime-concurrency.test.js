@@ -177,6 +177,7 @@ function createBareService({
       handleToneSelect: async () => undefined,
     },
     { setBot() {} },
+    { setBot() {} },
     {
       telegramBotToken: "123456:test-token",
       telegram: { apiTimeoutMs: 5_000 },

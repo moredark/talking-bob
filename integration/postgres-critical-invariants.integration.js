@@ -6,6 +6,7 @@ const { UserService } = require("../dist/modules/user/user.service");
 const { RateLimitService } = require("../dist/modules/rate-limit/rate-limit.service");
 const { ScheduleService } = require("../dist/modules/schedule/schedule.service");
 const { ResponseService } = require("../dist/modules/response/response.service");
+const { StreakService } = require("../dist/modules/streak/streak.service");
 const { AdminAuditContextService } = require("../dist/modules/admin/admin-audit-context.service");
 const { AdminAuditService, AdminAuditWriteError } = require("../dist/modules/admin/admin-audit.service");
 const { AdminPromptsService } = require("../dist/modules/admin/admin-prompts.service");
@@ -79,6 +80,89 @@ test("critical PostgreSQL invariants", async (t) => {
     });
     assert.equal(result.timezone, "Pacific/Honolulu");
     assert.equal(Number(result.millis), instant.getTime());
+  });
+
+  await t.test("streak qualification is atomic and calendar/source/reminder identities are unique", async () => {
+    const migrations = await prisma.$queryRaw`
+      SELECT migration_name FROM "_prisma_migrations"
+      WHERE migration_name = '20260811120000_add_streaks'
+        AND finished_at IS NOT NULL AND rolled_back_at IS NULL
+    `;
+    assert.equal(migrations.length, 1);
+
+    const user = await createUser({ timezone: "UTC" });
+    const prompt = await createPrompt("streak-invariants");
+    const firstSession = await createSentUserPrompt(user.id, prompt.id);
+    const secondSession = await createSentUserPrompt(user.id, prompt.id);
+    const service = new StreakService(prisma);
+    const qualifiedAt = new Date("2026-08-01T10:00:00.000Z");
+
+    await assert.rejects(
+      prisma.$transaction(async (tx) => {
+        await service.qualifyConversation({
+          userId: user.id,
+          userPromptId: firstSession.id,
+          qualifiedAt,
+        }, tx);
+        throw new Error("force_streak_rollback");
+      }),
+      /force_streak_rollback/,
+    );
+    assert.equal(await prisma.streakDay.count({ where: { userId: user.id } }), 0);
+    assert.equal(await prisma.streakReminder.count({ where: { userId: user.id } }), 0);
+    assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).currentStreak, 0);
+
+    await prisma.$transaction((tx) => service.qualifyConversation({
+      userId: user.id,
+      userPromptId: firstSession.id,
+      qualifiedAt,
+    }, tx));
+    const parallelClaims = await Promise.all([
+      service.claimDueReminders(1, new Date("2026-08-02T21:00:00.000Z")),
+      new StreakService(prisma).claimDueReminders(1, new Date("2026-08-02T21:00:00.000Z")),
+    ]);
+    assert.equal(parallelClaims.flat().length, 1, "parallel workers claim one reminder identity");
+    const localDate = new Date("2026-08-01T00:00:00.000Z");
+    await assert.rejects(
+      prisma.streakDay.create({
+        data: {
+          userId: user.id,
+          localDate,
+          qualifiedAt,
+          timezoneSnapshot: "UTC",
+          streakLength: 1,
+          longestStreak: 1,
+          sourceUserPromptId: secondSession.id,
+        },
+      }),
+      (error) => error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002",
+    );
+    await assert.rejects(
+      prisma.streakDay.create({
+        data: {
+          userId: user.id,
+          localDate: new Date("2026-08-02T00:00:00.000Z"),
+          qualifiedAt,
+          timezoneSnapshot: "UTC",
+          streakLength: 2,
+          longestStreak: 2,
+          sourceUserPromptId: firstSession.id,
+        },
+      }),
+      (error) => error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002",
+    );
+    const reminder = await prisma.streakReminder.findFirstOrThrow({ where: { userId: user.id } });
+    await assert.rejects(
+      prisma.streakReminder.create({
+        data: {
+          userId: user.id,
+          localDate: reminder.localDate,
+          nextAttemptAt: reminder.nextAttemptAt,
+          expiresAt: reminder.expiresAt,
+        },
+      }),
+      (error) => error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002",
+    );
   });
   await t.test("runtime settings singleton enforces shape, independent CAS, and audit atomicity", async () => {
     const migrations = await prisma.$queryRaw`
@@ -416,7 +500,7 @@ test("critical PostgreSQL invariants", async (t) => {
     await prisma.conversationMessage.create({
       data: { userPromptId: userPrompt.id, role: "user", content: "hello", telegramUpdateId: nextTelegramId() },
     });
-    const service = new ResponseService(prisma);
+    const service = new ResponseService(prisma, new StreakService(prisma));
 
     const wrongOwner = await service.claimGeneration({
       userId: stranger.id, userPromptId: userPrompt.id, voiceFileId: "voice", generationRequestKey: "wrong-owner",

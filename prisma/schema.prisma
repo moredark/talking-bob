@@ -42,6 +42,19 @@ enum ReportDeliveryStatus {
   failed
 }
 
+enum StreakDayKind {
+  activity
+  freeze
+}
+
+enum StreakReminderStatus {
+  pending
+  sent
+  cancelled
+  failed
+  expired
+}
+
 enum BroadcastMode {
   immediate
   scheduled
@@ -64,24 +77,32 @@ enum BroadcastRecipientStatus {
 }
 
 model User {
-  id                  String    @id @default(uuid())
-  telegramId          BigInt    @unique
-  username            String?
-  dailyPromptEnabled  Boolean   @default(true)
-  announcementEnabled Boolean   @default(true)
-  lastUserMessageAt   DateTime? @db.Timestamptz(3)
-  dailyPromptHour     Int       @default(13)
-  dailyPromptMinute   Int       @default(0)
-  timezone            String    @default("Europe/Moscow")
-  agentTone           String    @default("friendly")
-  lastPromptSentAt    DateTime? @db.Timestamptz(3)
-  nextPromptAt        DateTime? @db.Timestamptz(3)
-  languageLevel       String?
-  status              String    @default("active")
-  bannedAt            DateTime?
-  bannedReason        String?
-  createdAt           DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt           DateTime  @updatedAt @db.Timestamptz(3)
+  id                    String    @id @default(uuid())
+  telegramId            BigInt    @unique
+  username              String?
+  dailyPromptEnabled    Boolean   @default(true)
+  announcementEnabled   Boolean   @default(true)
+  lastUserMessageAt     DateTime? @db.Timestamptz(3)
+  dailyPromptHour       Int       @default(13)
+  dailyPromptMinute     Int       @default(0)
+  timezone              String    @default("Europe/Moscow")
+  agentTone             String    @default("friendly")
+  lastPromptSentAt      DateTime? @db.Timestamptz(3)
+  nextPromptAt          DateTime? @db.Timestamptz(3)
+  currentStreak         Int       @default(0)
+  longestStreak         Int       @default(0)
+  lastStreakLocalDate   DateTime? @db.Date
+  streakExpiresAt       DateTime? @db.Timestamptz(3)
+  streakReminderEnabled Boolean   @default(true)
+  streakReminderHour    Int       @default(21)
+  streakReminderMinute  Int       @default(0)
+  nextStreakReminderAt  DateTime? @db.Timestamptz(3)
+  languageLevel         String?
+  status                String    @default("active")
+  bannedAt              DateTime?
+  bannedReason          String?
+  createdAt             DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(3)
 
   userPrompts         UserPrompt[]
   userResponses       UserResponse[]
@@ -90,8 +111,11 @@ model User {
   quotaWindows        QuotaWindow[]
   broadcastRecipients BroadcastRecipient[]
   activityDays        UserActivityDay[]
+  streakDays          StreakDay[]
+  streakReminders     StreakReminder[]
 
   @@index([nextPromptAt])
+  @@index([nextStreakReminderAt], map: "users_next_streak_reminder_at_idx")
   @@index([lastUserMessageAt], map: "users_lastUserMessageAt_idx")
   @@map("users")
 }
@@ -141,6 +165,7 @@ model UserPrompt {
   userResponse         UserResponse?
   conversationMessages ConversationMessage[]
   aiProviderCalls      AiProviderCall[]
+  streakDay            StreakDay?
 
   @@index([userId])
   @@index([userId, createdAt(sort: Desc), id(sort: Desc)], map: "user_prompts_user_created_id_idx")
@@ -202,6 +227,9 @@ model UserResponse {
   analysisVersion          Int?
   analysisKind             ReportAnalysisKind?
   overallScore             Float?
+  streakCurrentSnapshot    Int?
+  streakLongestSnapshot    Int?
+  streakIsNewRecord        Boolean?
   reportDeliveredAt        DateTime?              @db.Timestamptz(3)
   sensitiveDataPurgedAt    DateTime?              @db.Timestamptz(3)
   createdAt                DateTime               @default(now()) @db.Timestamptz(3)
@@ -242,6 +270,51 @@ model ReportDeliveryRequest {
   @@unique([userResponseId, requestKey])
   @@index([status, deliveryAttemptedAt, claimExpiresAt], map: "report_delivery_requests_reclaim_idx")
   @@map("report_delivery_requests")
+}
+
+model StreakDay {
+  id                 String        @id @default(uuid())
+  userId             String
+  localDate          DateTime      @db.Date
+  qualifiedAt        DateTime      @db.Timestamptz(3)
+  timezoneSnapshot   String        @db.VarChar(128)
+  kind               StreakDayKind @default(activity)
+  streakLength       Int
+  longestStreak      Int
+  sourceUserPromptId String?       @unique
+  createdAt          DateTime      @default(now()) @db.Timestamptz(3)
+
+  user             User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceUserPrompt UserPrompt? @relation(fields: [sourceUserPromptId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, localDate])
+  @@index([userId, localDate], map: "streak_days_user_local_date_idx")
+  @@map("streak_days")
+}
+
+model StreakReminder {
+  id                  String               @id @default(uuid())
+  userId              String
+  localDate           DateTime             @db.Date
+  status              StreakReminderStatus @default(pending)
+  attemptCount        Int                  @default(0)
+  claimToken          String?              @db.Uuid
+  claimExpiresAt      DateTime?            @db.Timestamptz(3)
+  nextAttemptAt       DateTime?            @db.Timestamptz(3)
+  deliveryAttemptedAt DateTime?            @db.Timestamptz(3)
+  sentAt              DateTime?            @db.Timestamptz(3)
+  expiresAt           DateTime             @db.Timestamptz(3)
+  lastErrorCode       String?              @db.VarChar(64)
+  lastErrorAt         DateTime?            @db.Timestamptz(3)
+  createdAt           DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime             @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, localDate])
+  @@index([status, nextAttemptAt, claimExpiresAt], map: "streak_reminders_reclaim_idx")
+  @@index([expiresAt], map: "streak_reminders_expires_at_idx")
+  @@map("streak_reminders")
 }
 
 model UserRequest {

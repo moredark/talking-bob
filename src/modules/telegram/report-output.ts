@@ -6,10 +6,17 @@ export type ReportOutputFeedback = FeedbackResult & {
   kind?: "model" | "fallback" | "legacy";
 };
 
+export interface ReportStreakSnapshot {
+  current: number;
+  longest: number;
+  isNewRecord: boolean;
+}
+
 /** Formats report content as literal Telegram-safe plain text. */
 export function formatReportOutput(
   feedback: ReportOutputFeedback,
   transcript: string,
+  streak?: ReportStreakSnapshot | null,
 ): string {
   const lines = [
     "📝 Ваш ответ:",
@@ -33,6 +40,15 @@ export function formatReportOutput(
     for (const point of feedback.improvementPoints) {
       lines.push(`• ${point}`);
     }
+  }
+
+  if (streak && streak.current > 0) {
+    lines.push(
+      "",
+      streak.isNewRecord
+        ? `🔥 Стрик: ${streak.current} дней — новый рекорд!`
+        : `🔥 Стрик: ${streak.current} дней`,
+    );
   }
 
   return lines.join("\n");

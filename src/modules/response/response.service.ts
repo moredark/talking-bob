@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { UserResponse } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database";
+import { StreakService } from "../streak";
 import { ResponseCrudOperations } from "./response-crud.operations";
 import { ResponseDeliveryOperations } from "./response-delivery.operations";
 import { ResponseGenerationOperations } from "./response-generation.operations";
@@ -36,8 +37,8 @@ export class ResponseService {
   private readonly delivery: ResponseDeliveryOperations;
   private readonly crud: ResponseCrudOperations;
 
-  constructor(prisma: PrismaService) {
-    this.generation = new ResponseGenerationOperations(prisma);
+  constructor(prisma: PrismaService, streakService: StreakService) {
+    this.generation = new ResponseGenerationOperations(prisma, streakService);
     this.delivery = new ResponseDeliveryOperations(prisma);
     this.crud = new ResponseCrudOperations(prisma);
   }

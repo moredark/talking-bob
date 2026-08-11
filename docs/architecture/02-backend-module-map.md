@@ -19,6 +19,10 @@ flowchart TD
     telegram --> rate[RateLimitModule]
     telegram --> ai[AiModule]
     telegram --> schedule[ScheduleModule]
+    telegram --> streak[StreakModule]
+    conversation --> streak
+    response --> streak
+    schedule --> streak
     health -. lifecycle .-> telegram
     admin --> auth
 ```
@@ -32,6 +36,11 @@ flowchart TD
   не дублируется между ними. Атомарные state transitions остаются в профильных
   сервисах.
 - `ScheduleModule` входит в Telegram-контур: dispatcher получает активный экземпляр grammY-бота от `TelegramService`.
+- `StreakModule` владеет календарной квалификацией, агрегатами серии,
+  настройками reminder и durable reminder lifecycle. `ConversationModule` и
+  `ResponseModule` вызывают его внутри close-транзакций, `ScheduleModule`
+  пересчитывает streak-инстанты при смене timezone, а `TelegramModule`
+  передаёт активный bot reminder dispatcher-у.
 - `HealthModule` читает состояние `TelegramService` для readiness, но не владеет жизненным циклом бота.
 - `AuthModule` предоставляет guard и auth-сервис; `AdminModule` использует их для защищённого административного API.
 
@@ -52,6 +61,7 @@ flowchart TD
 | `RateLimitModule` | Rolling/calendar admission и quota windows | Повтор внешнего действия |
 | `AiModule` | Provider interfaces, implementations и bounded limiter | Conversation/report ownership |
 | `ScheduleModule` | Время, prompt reservation, scheduled/manual delivery state | Telegram update routing |
+| `StreakModule` | Квалификация закрытого диалога, current/longest aggregates, snapshots и reminder claim/delivery | Закрытие conversation, генерация отчёта или Telegram update routing |
 | `HealthModule` | Process/DB/Telegram readiness projection | Recovery providers или delivery backlog |
 | `AuthModule` | Admin identity, JWT и guard | Пользователь Telegram |
 | `AdminModule` | Защищённые management/read API | Hosting Admin SPA |

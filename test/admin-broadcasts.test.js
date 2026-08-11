@@ -452,6 +452,7 @@ test("announcement opt-out is independent from the daily prompt schedule", async
       enableSchedule: async () => { scheduleCalls += 1; },
       disableSchedule: async () => { scheduleCalls += 1; },
     },
+    { getStatus: async () => null },
   );
   const edits = [];
   await handler.handleAnnouncementToggle({

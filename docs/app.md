@@ -1,11 +1,14 @@
 # Talking Bob: application contract
 
-> Verified against the backend on 2026-08-10, through migration
-> `20260810160000_admin_analytics_facts`.
+> Verified against the backend on 2026-08-11, through migration
+> `20260811120000_add_streaks`.
 
 Talking Bob is a Telegram bot for practising spoken English. User-facing
 commands, status messages, and report feedback are in Russian. Questions and
 LLM conversation follow-ups are in English.
+
+> **Streak and reminders — status: implemented.** The contract in that section
+> is part of the verified schema/runtime baseline named above.
 
 The runtime uses Cloud.ru Whisper for speech-to-text and a Cloud.ru-compatible
 chat-completions LLM behind injected interfaces. Questions are text-first. A
@@ -87,6 +90,56 @@ chunks of at most 4096 UTF-16 code units. Only the final chunk carries the
 **New question** keyboard. Definite delivery rejection marks that delivery
 request failed; an ambiguous delivery remains pending and requires a new
 `/report` command to attempt delivery of the same persisted report.
+
+## Streak and reminders (implemented)
+
+A local calendar day qualifies when a conversation is successfully closed,
+not when report generation or report delivery later succeeds. Both closing
+paths use the same rule: the third accepted voice turn and a valid manual
+`/report` after at least one accepted voice turn. Qualification belongs to the
+same database transaction that closes the `UserPrompt` and creates or claims
+its `UserResponse` generation owner.
+
+The first qualified day starts a streak of one. A qualification on the next
+local calendar day increments it; another closed conversation on an already
+qualified day is idempotent; a qualification after one or more missed days
+starts a new streak of one. `longestStreak` changes only when the new current
+value exceeds it. The report owns a snapshot of the current/best values from
+its closing transaction, so delayed generation and delivery cannot display a
+newer conversation's result. The delivered report appends
+`🔥 Стрик: N дней` and explicitly marks a newly established record.
+
+The closing instant is converted with the user's current canonical IANA
+timezone. A qualified day keeps that timezone snapshot and is never rewritten
+after a timezone change. A streak earned on local date `D` remains rescuable
+through the whole of `D + 1` and expires at the start of `D + 2` in the current
+effective timezone. Status reads return an effective current streak of zero
+once that instant has passed, even if the denormalized stored counter has not
+yet been rewritten. Changing timezone recalculates only the future expiry and
+reminder instants; it does not reinterpret historical qualified dates.
+
+Streak reminders are independently enabled by default and default to `21:00`
+local time. `/settings` shows the effective current and longest streak, a
+reminder toggle, and a fixed-time selector following the existing daily-prompt
+settings pattern. A reminder is eligible only on the rescue day when the user
+has a non-zero active streak, yesterday is the last qualified local date,
+today is not qualified, and local midnight has not passed. At most one reminder
+delivery identity exists per user and rescue local date.
+
+The minute scheduler rechecks eligibility immediately before Telegram I/O. A
+conversation closed before that check cancels the pending reminder. The
+Russian reminder includes the current streak length and says that a
+conversation must be completed before local midnight. Definite retry-safe
+temporary failures use bounded backoff only until expiry; permanent failures
+and ambiguous Telegram outcomes are terminal and are not automatically sent
+again. Expired unattempted leases can be reclaimed after a process restart.
+
+The streak launch does not infer or backfill days from historical responses or
+`UserActivityDay`: existing users begin at zero, while reminder settings start
+enabled at `21:00`. Freeze days are not created in this MVP. The day model
+reserves an `activity | freeze` kind so freezes can be added later without
+changing the calendar identity or current qualification rules. There is no
+separate `/streak` command in this scope.
 
 ## Time and scheduling contract
 

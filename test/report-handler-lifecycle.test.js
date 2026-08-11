@@ -65,6 +65,7 @@ function createSubject({ claimResult, response = {}, llm = {}, messages, observa
     completeChunk: [], failGeneration: [], definite: [], ambiguous: [], llm: [],
   };
   const responseService = {
+    getResponseById: async () => response.currentResponse ?? null,
     claimGeneration: async (data) => {
       calls.claim.push(data);
       return claimResult ?? { outcome: "claimed", claim: generationClaim() };
@@ -191,6 +192,9 @@ test("ReportHandler resends generated persisted output without invoking the LLM"
         id: "response-saved",
         transcript: "Persisted transcript",
         analysis: JSON.stringify({ ...feedback, kind: "fallback" }),
+        streakCurrentSnapshot: 5,
+        streakLongestSnapshot: 8,
+        streakIsNewRecord: false,
       },
     },
     response,
@@ -206,6 +210,7 @@ test("ReportHandler resends generated persisted output without invoking the LLM"
   assert.equal(calls.createDelivery[0][1], "message:123:11");
   assert.match(replies[0][0], /Persisted transcript/);
   assert.match(replies[0][0], /базовый автоматический отчёт/i);
+  assert.match(replies[0][0], /🔥 Стрик: 5 дней/);
 });
 
 test("ReportHandler explains when a generated report expired under data retention", async () => {

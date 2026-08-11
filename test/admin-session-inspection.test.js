@@ -170,9 +170,20 @@ test("AI trace retention is fixed at 30 days, marks affected sessions, and is id
 });
 
 test("reset progress deletes provider traces before dependent sessions", async () => {
-  const order = []; const count = { count: 1 };
-  const tx = { reportDeliveryRequest: { deleteMany: async () => { order.push("report"); return count; } }, aiProviderCall: { deleteMany: async () => { order.push("trace"); return count; } }, userActivityDay: { deleteMany: async () => { order.push("activity"); return count; } }, conversationMessage: { deleteMany: async () => { order.push("message"); return count; } }, userResponse: { deleteMany: async () => { order.push("response"); return count; } }, userPrompt: { deleteMany: async () => { order.push("session"); return count; } }, user: { update: async () => { order.push("user"); } } };
+  const order = []; const count = { count: 1 }; let userUpdate;
+  const tx = { $queryRaw: async (query) => { const sql = (query.strings || []).join("?"); if (sql.includes('FROM "user_prompts"')) { order.push("lock-prompts"); return [{ id: sessionId }]; } if (sql.includes('FROM "users"')) { order.push("lock-user"); return [{ id: userId }]; } throw new Error(`unexpected lock: ${sql}`); }, streakReminder: { deleteMany: async () => { order.push("streak-reminder"); return count; } }, streakDay: { deleteMany: async () => { order.push("streak-day"); return count; } }, reportDeliveryRequest: { deleteMany: async () => { order.push("report"); return count; } }, aiProviderCall: { deleteMany: async () => { order.push("trace"); return count; } }, userActivityDay: { deleteMany: async () => { order.push("activity"); return count; } }, conversationMessage: { deleteMany: async () => { order.push("message"); return count; } }, userResponse: { deleteMany: async () => { order.push("response"); return count; } }, userPrompt: { deleteMany: async () => { order.push("session"); return count; } }, user: { update: async (args) => { order.push("user"); userUpdate = args; } } };
   const audit = { runSuccess: async (_metadata, callback) => (await callback(tx)).result };
   assert.equal(await new AdminUsersService({ user: { findUnique: async () => ({ id: userId }) } }, audit).resetUserProgress(userId), true);
-  assert.deepEqual(order, ["report", "trace", "activity", "message", "response", "session", "user"]);
+  assert.deepEqual(order, ["lock-prompts", "lock-user", "streak-reminder", "streak-day", "report", "trace", "activity", "message", "response", "session", "user"]);
+  assert.deepEqual(userUpdate, {
+    where: { id: userId },
+    data: {
+      lastUserMessageAt: null,
+      currentStreak: 0,
+      longestStreak: 0,
+      lastStreakLocalDate: null,
+      streakExpiresAt: null,
+      nextStreakReminderAt: null,
+    },
+  });
 });

@@ -1,7 +1,8 @@
 # Данные и состояния
 
-Prisma schema содержит десять моделей. Архитектурно они образуют не десять
-независимых CRUD-таблиц, а несколько агрегатов с разными владельцами переходов.
+Prisma schema содержит девятнадцать моделей. Архитектурно они образуют не
+независимые CRUD-таблицы, а несколько агрегатов с разными владельцами
+переходов.
 Точные поля, enum, индексы, CHECK/trigger invariants и миграции описаны в
 [database contract](../database.md).
 
@@ -9,10 +10,11 @@ Prisma schema содержит десять моделей. Архитектур
 
 | Группа | Модели | Владелец поведения |
 | --- | --- | --- |
-| Пользователь и настройки | `User` | `UserService`, `ScheduleService` |
+| Пользователь и настройки | `User` | `UserService`, `ScheduleService`, `StreakService` |
 | Каталог вопросов | `Prompt` | `PromptService`, admin API |
 | Практическая сессия | `UserPrompt`, `ConversationMessage` | `ScheduleService`, `ConversationService` |
 | Отчёт и его доставка | `UserResponse`, `ReportDeliveryRequest` | `ResponseService` |
+| Стрик и напоминания | `StreakDay`, `StreakReminder` | `StreakService`, `StreakReminderDispatcher` |
 | Admission/audit | `UserRequest`, `QuotaWindow` | `RateLimitService` |
 | Admin identity | `AdminUser` | `AuthService` |
 | Наблюдаемость | `ErrorLog` | `ErrorLogService`, retention |
@@ -32,6 +34,9 @@ flowchart LR
     UR --> RD["ReportDeliveryRequest[]"]
     U --> UW["QuotaWindow[]"]
     U --> REQ["UserRequest[]"]
+    U --> SD["StreakDay[]"]
+    U --> SR["StreakReminder[]"]
+    UP --> SD
     UW -. optional window .-> REQ
 ```
 
@@ -85,6 +90,34 @@ Generation и delivery разделены намеренно. LLM analysis вы�
 контент заново. `requestKey` делает повтор одного Telegram request идемпотентным,
 а новый request позволяет явно переотправить сохранённый результат.
 
+## Жизненный цикл стрика
+
+`StreakDay` — immutable квалификация локального календарного дня. Unique
+`userId, localDate` не позволяет нескольким закрытым разговорам увеличить
+серию повторно, а nullable unique `sourceUserPromptId` связывает первую
+квалификацию с закрывшей её сессией. `User.currentStreak`, `longestStreak`,
+`lastStreakLocalDate` и lifecycle instants — денормализованная проекция;
+эффективный current равен нулю после `streakExpiresAt`.
+
+```mermaid
+stateDiagram-v2
+    state "Reminder: StreakReminder" as Reminder {
+        [*] --> pending
+        pending --> pending: lease claim или retry-safe backoff
+        pending --> sent: Telegram success persisted
+        pending --> cancelled: disabled/rescheduled/qualified/not eligible
+        pending --> failed: permanent или ambiguous outcome
+        pending --> expired: local deadline reached
+    }
+```
+
+У одного пользователя и rescue local date существует одна durable reminder
+identity. `nextStreakReminderAt` на `User` — индексированный due-pointer, а не
+отдельная очередь. До Telegram I/O attempt-транзакция блокирует сначала `User`,
+затем `StreakReminder`, повторно проверяет eligibility и сохраняет attempt
+marker. Это тот же порядок мутаций, что у qualification, и он исключает
+deadlock в гонке закрытия диалога с отправкой.
+
 ## Транзакционные правила
 
 ### Row locks
@@ -93,6 +126,7 @@ Generation и delivery разделены намеренно. LLM analysis вы�
 
 - `User` — schedule selection и quota window;
 - `UserPrompt` — voice acceptance, conversation close и generation ownership;
+- `User` → `StreakReminder` — qualification/settings и reminder attempt;
 - `UserResponse` — generation completion/reclaim;
 - `ReportDeliveryRequest` — cursor и delivery outcome.
 

@@ -5,11 +5,13 @@ import { ScheduleService } from "./schedule.service";
 import { SchedulerService } from "./scheduler.service";
 import { DailyPromptDispatcher } from "./daily-prompt.dispatcher";
 import { MESSAGE_DISPATCHER } from "./message-dispatcher.interface";
+import { StreakModule } from "../streak";
 
 @Module({
   imports: [
     NestScheduleModule.forRoot(),
     DatabaseModule,
+    StreakModule,
   ],
   providers: [
     ScheduleService,

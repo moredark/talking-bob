@@ -69,7 +69,7 @@ test("ScheduleService remains a one-argument Prisma facade with schedule default
   );
 });
 
-test("ResponseService remains a one-argument Prisma facade and preserves method arguments", async () => {
+test("ResponseService accepts its streak collaborator and preserves facade method arguments", async () => {
   const attemptedAt = new Date("2026-08-09T08:00:00.000Z");
   const deliveryUpdates = [];
   const lookups = [];
@@ -100,7 +100,7 @@ test("ResponseService remains a one-argument Prisma facade and preserves method 
     },
   };
 
-  const service = new ResponseService(prisma);
+  const service = new ResponseService(prisma, {});
   const begun = await withFixedDate(attemptedAt.toISOString(), () =>
     service.beginDeliveryChunk("request-1", "claim-1"),
   );

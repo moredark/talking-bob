@@ -49,8 +49,18 @@ test("deterministic user journey reaches an automatic report and a non-repeating
   const userService = new UserService(prisma);
   const promptService = new PromptService(prisma);
   const scheduleService = new ScheduleService(prisma);
-  const conversationService = new ConversationService(prisma);
-  const responseService = new ResponseService(prisma);
+  const streakService = {
+    qualifyConversation: async () => ({
+      currentStreak: 1,
+      longestStreak: 1,
+      isNewRecord: true,
+      localDate: new Date("2026-08-11T00:00:00.000Z"),
+      expiresAt: new Date("2026-08-13T00:00:00.000Z"),
+    }),
+    getStatus: async () => ({ currentStreak: 0, longestStreak: 0 }),
+  };
+  const conversationService = new ConversationService(prisma, streakService);
+  const responseService = new ResponseService(prisma, streakService);
 
   const telegram = { messages: [], voices: [], chatActions: [] };
   const dispatcher = new DailyPromptDispatcher(scheduleService);
@@ -141,7 +151,7 @@ test("deterministic user journey reaches an automatic report and a non-repeating
     scheduleService,
     dispatcher,
   );
-  const settingsHandler = new SettingsHandler(userService, scheduleService);
+  const settingsHandler = new SettingsHandler(userService, scheduleService, streakService);
 
   const startReplies = [];
   const startContext = {

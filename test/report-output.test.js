@@ -78,6 +78,31 @@ test("formatReportOutput visibly marks fallback analysis", () => {
   assert.match(output, /полный анализ модели недоступен/i);
 });
 
+test("formatReportOutput appends the qualified streak and marks a new record", () => {
+  const feedback = {
+    summary: "Хороший ответ.",
+    improvementPoints: [],
+    overallScore: 9,
+  };
+
+  assert.match(
+    formatReportOutput(feedback, "I practiced today.", {
+      current: 7,
+      longest: 7,
+      isNewRecord: true,
+    }),
+    /🔥 Стрик: 7 дней — новый рекорд!$/,
+  );
+  assert.match(
+    formatReportOutput(feedback, "I practiced today.", {
+      current: 6,
+      longest: 10,
+      isNewRecord: false,
+    }),
+    /🔥 Стрик: 6 дней$/,
+  );
+});
+
 test("chunkReportOutput handles 4095, 4096, and 4097 code-unit inputs exactly", () => {
   for (const length of [4095, 4096, 4097]) {
     const input = "x".repeat(length);

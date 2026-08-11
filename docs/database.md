@@ -1,11 +1,14 @@
 # Database contract
 
-Актуально на **2026-08-10**. Документ сверён с `prisma/schema.prisma` и
-миграциями по `20260810160000_admin_analytics_facts` включительно.
+Актуально на **2026-08-11**. Документ сверён с `prisma/schema.prisma` и
+миграциями по `20260811120000_add_streaks` включительно.
 
 Здесь описана база bot/backend. `AdminUser` намеренно не включён: это отдельный
 контур аутентификации. Append-only `AdminAuditLog` включён, поскольку его
 атомарность, sanitization и retention являются backend-инвариантами.
+
+> **Streak and reminders — status: implemented.** Раздел ниже описывает
+> проверенные schema и runtime-контракты миграции, указанной выше.
 
 ## Общие соглашения
 
@@ -20,7 +23,9 @@
   `users.bannedAt` остаётся `TIMESTAMP(3)` без timezone.
 - `createdAt DEFAULT now()` означает Prisma/SQL `CURRENT_TIMESTAMP`;
   `updatedAt @updatedAt` обновляется Prisma-клиентом, SQL-default отсутствует.
-- Все внешние ключи ниже используют `ON DELETE RESTRICT ON UPDATE CASCADE`.
+- Если явно не указано обратное, внешние ключи ниже используют
+  `ON DELETE RESTRICT ON UPDATE CASCADE`. Streak-таблицы удаляются cascade с
+  пользователем, а nullable source-ссылка дня получает `ON DELETE SET NULL`.
 
 ## Enum-типы PostgreSQL
 
@@ -30,6 +35,8 @@
 - `ReportGenerationStatus`: `generating`, `generated`, `failed`.
 - `ReportAnalysisKind`: `model`, `fallback`, `legacy`.
 - `ReportDeliveryStatus`: `pending`, `delivered`, `failed`.
+- `StreakDayKind`: `activity`, `freeze`.
+- `StreakReminderStatus`: `pending`, `sent`, `cancelled`, `failed`, `expired`.
 
 ## Таблицы
 
@@ -282,6 +289,117 @@ windowEnd`; indexes `userId, action, windowEnd` и `windowEnd`.
 ограничивает identifiers, action/entity compatibility, outcomes/failure codes
 и форму success/failure row. Actor id намеренно не FK: запись сохраняет snapshot
 даже после изменения auth-контура.
+
+## Streak and reminders (implemented)
+
+### Enum и расширение существующих моделей
+
+- `StreakDayKind`: `activity`, `freeze`. MVP создаёт только `activity`;
+  `freeze` зарезервирован без изменения календарной модели.
+- `StreakReminderStatus`: `pending`, `sent`, `cancelled`, `failed`, `expired`.
+  Активный claim представлен `pending` с полной lease-парой, а не отдельным
+  статусом.
+
+В `users` добавляются:
+
+| Поле | PostgreSQL | Null | Default / назначение |
+|---|---|---:|---|
+| `currentStreak` | `INTEGER` | нет | `0`; длина последней сохранённой серии |
+| `longestStreak` | `INTEGER` | нет | `0`; исторический максимум |
+| `lastStreakLocalDate` | `DATE` | да | Последний квалифицированный локальный день |
+| `streakExpiresAt` | `TIMESTAMPTZ(3)` | да | Exclusive instant сгорания активной серии |
+| `streakReminderEnabled` | `BOOLEAN` | нет | `true`; отдельная настройка reminder |
+| `streakReminderHour` | `INTEGER` | нет | `21` |
+| `streakReminderMinute` | `INTEGER` | нет | `0` |
+| `nextStreakReminderAt` | `TIMESTAMPTZ(3)` | да | Следующий due instant; null без eligible серии |
+
+`nextStreakReminderAt` индексируется для минутного claim. Эффективный current
+streak при чтении равен нулю, если `streakExpiresAt <= now`, даже если
+денормализованный `currentStreak` ещё не обновлён следующей записью.
+
+В `user_responses` добавляются nullable snapshots
+`streakCurrentSnapshot INTEGER`, `streakLongestSnapshot INTEGER` и
+`streakIsNewRecord BOOLEAN`. Они заполняются в close transaction и позволяют
+отложенной генерации/доставке показать результат именно этой сессии.
+
+### `streak_days` (`StreakDay`)
+
+| Поле | PostgreSQL | Null | Default / назначение |
+|---|---|---:|---|
+| `id` | `TEXT` | нет | Prisma `uuid()`; PK |
+| `userId` | `TEXT` | нет | FK → `users.id` |
+| `localDate` | `DATE` | нет | Календарный день квалификации |
+| `qualifiedAt` | `TIMESTAMPTZ(3)` | нет | Instant первого закрытия в этот день |
+| `timezoneSnapshot` | `VARCHAR(128)` | нет | Canonical IANA timezone квалификации |
+| `kind` | `StreakDayKind` | нет | `activity` |
+| `streakLength` | `INTEGER` | нет | Current streak после этой строки |
+| `longestStreak` | `INTEGER` | нет | Longest streak после этой строки |
+| `sourceUserPromptId` | `TEXT` | да | FK → `user_prompts.id`; первая закрывшая день сессия |
+| `createdAt` | `TIMESTAMPTZ(3)` | нет | `CURRENT_TIMESTAMP` |
+
+Ключи и индексы: PK `id`; composite unique `userId, localDate`; unique nullable
+`sourceUserPromptId`; index `userId, localDate`. Первая уникальность исключает
+повторное начисление за несколько разговоров в день, вторая делает повтор
+close transition одной сессии идемпотентным. FK пользователя использует
+`ON DELETE CASCADE`, а nullable source FK — `ON DELETE SET NULL`.
+
+### `streak_reminders` (`StreakReminder`)
+
+| Поле | PostgreSQL | Null | Default / назначение |
+|---|---|---:|---|
+| `id` | `TEXT` | нет | Prisma `uuid()`; PK |
+| `userId` | `TEXT` | нет | FK → `users.id` |
+| `localDate` | `DATE` | нет | Rescue-день доставки |
+| `status` | `StreakReminderStatus` | нет | `pending` |
+| `attemptCount` | `INTEGER` | нет | `0`; число начатых Telegram attempts |
+| `nextAttemptAt` | `TIMESTAMPTZ(3)` | да | Due instant безопасной попытки |
+| `claimToken` | `UUID` | да | Lease/fencing token |
+| `claimExpiresAt` | `TIMESTAMPTZ(3)` | да | Lease deadline |
+| `deliveryAttemptedAt` | `TIMESTAMPTZ(3)` | да | Маркер начатого внешнего I/O |
+| `sentAt` | `TIMESTAMPTZ(3)` | да | Подтверждённая Telegram delivery |
+| `expiresAt` | `TIMESTAMPTZ(3)` | нет | Exclusive local-midnight deadline |
+| `lastErrorCode` | `VARCHAR(64)` | да | Санитизированный код исхода |
+| `lastErrorAt` | `TIMESTAMPTZ(3)` | да | Время исхода с ошибкой |
+| `createdAt` | `TIMESTAMPTZ(3)` | нет | `CURRENT_TIMESTAMP` |
+| `updatedAt` | `TIMESTAMPTZ(3)` | нет | Prisma `@updatedAt` |
+
+Ключи и индексы: PK `id`; composite unique `userId, localDate`; claim index
+`status, nextAttemptAt, claimExpiresAt`; index `expiresAt`. Unique identity
+ограничивает reminder одной durable записью на пользователя и rescue-день. FK
+пользователя использует `ON DELETE CASCADE`.
+
+### Транзакционный и временной контракт
+
+- Qualification блокирует `UserPrompt`, затем `User`, и в одной транзакции
+  закрывает conversation, создаёт/захватывает `UserResponse`, вставляет максимум
+  один `StreakDay`, обновляет user aggregate и response snapshots, отменяет
+  ещё не отправленный reminder текущего дня.
+- Конфликт любой streak-day uniqueness означает идемпотентный повтор и не
+  увеличивает агрегат. Первый день даёт 1, соседний local date увеличивает на
+  1, после разрыва новая серия начинается с 1; longest растёт только при
+  превышении.
+- Закрытие в instant `T` использует current effective timezone. Для последнего
+  qualified date `D`, `streakExpiresAt` равен началу `D + 2`, а
+  `nextStreakReminderAt` — выбранному времени `D + 1`. Используются общие
+  gap/overlap правила. Смена timezone не переписывает `StreakDay`, но
+  пересчитывает будущие expiry/reminder instants.
+- Reminder claim всегда повторно проверяет enabled, активный ненулевой streak,
+  `lastStreakLocalDate = today - 1`, отсутствие `StreakDay` сегодня и
+  `now < expiresAt`. Закрытие разговора отменяет pending reminder; проверка
+  повторяется непосредственно перед Telegram I/O.
+- Lease и error metadata представлены полными парами. Не начатый `pending`
+  claim с истёкшей lease можно reclaim-ить. Retry-safe definite temporary
+  failure остаётся `pending` только с `nextAttemptAt < expiresAt`; permanent и
+  ambiguous outcomes терминальны (`failed`) и не отправляются повторно;
+  наступивший deadline даёт `expired`.
+
+### Миграция и backfill
+
+Миграция `20260811120000_add_streaks` не создаёт `streak_days` из
+`user_responses`, `user_prompts` или
+`user_activity_days`. Существующие пользователи получают нулевые счётчики,
+null lifecycle instants, включённые reminders и `21:00`. `UserActivityDay`
+остаётся независимой аналитической сущностью.
 
 ## SQL-инварианты, которых нет в Prisma DSL
 
