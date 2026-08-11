@@ -2,6 +2,7 @@ ARG NODE_IMAGE=node:24.18.0-alpine3.23@sha256:595398b0081eacda8e1c4c5b97b76cd102
 ARG NGINX_IMAGE=nginx:1.30.4-alpine3.24
 
 FROM ${NODE_IMAGE} AS build
+ENV NODE_OPTIONS=--max-old-space-size=1024
 WORKDIR /usr/src/admin
 COPY package.json package-lock.json ./
 RUN npm ci

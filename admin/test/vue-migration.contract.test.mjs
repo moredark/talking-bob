@@ -601,6 +601,25 @@ test("Vue entry point and Tailwind-enabled Vite build remain deployable", () => 
 
   assert.match(dockerfile, /RUN npm ci/);
   assert.match(dockerfile, /RUN npm run build/);
+  const runtimeStageMarker = dockerfile.search(/^FROM .* AS runtime$/m);
+  assert.notEqual(runtimeStageMarker, -1, "Dockerfile must keep a separate runtime stage");
+  const buildStage = dockerfile.slice(0, runtimeStageMarker);
+  const runtimeStage = dockerfile.slice(runtimeStageMarker);
+  const nodeOptions = "ENV NODE_OPTIONS=--max-old-space-size=1024";
+  assert.equal(
+    buildStage.match(/^ENV NODE_OPTIONS=--max-old-space-size=1024$/gm)?.length,
+    1,
+    "the build stage must set the exact Node heap limit once",
+  );
+  assert.ok(
+    buildStage.indexOf(nodeOptions) < buildStage.indexOf("RUN npm run build"),
+    "the Node heap limit must be configured before the admin build",
+  );
+  assert.doesNotMatch(
+    runtimeStage,
+    /NODE_OPTIONS/,
+    "the nginx runtime stage must not carry the build-only Node option",
+  );
   assert.match(dockerfile, /COPY --from=build[\s\S]*\/usr\/src\/admin\/dist[\s\S]*\/usr\/share\/nginx\/html/);
   assert.match(dockerfile, /USER nginx/);
   assert.match(dockerfile, /HEALTHCHECK[\s\S]*\/healthz/);
