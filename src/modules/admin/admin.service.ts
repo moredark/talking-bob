@@ -22,6 +22,7 @@ import { AdminPromptsService } from "./admin-prompts.service";
 import { AdminSessionsService } from "./admin-sessions.service";
 import { AdminUsersService } from "./admin-users.service";
 
+import { AdminPersonalitiesService } from "./admin-personalities.service";
 import { AdminSettingsService } from "./admin-settings.service";
 export * from "./admin.contracts";
 
@@ -37,8 +38,17 @@ export class AdminService {
     private readonly sessions: AdminSessionsService,
     private readonly audit: AdminAuditService,
     private readonly settings: AdminSettingsService,
+    private readonly personalities: AdminPersonalitiesService,
   ) {}
 
+  getPersonalities() { return this.personalities.list(); }
+  getPersonalityRules() { return this.personalities.getRules(); }
+  updatePersonalityRules(dto: import("./admin.contracts").UpdateAgentPromptRulesDto) { return this.personalities.updateRules(dto); }
+  createPersonality(dto: import("./admin.contracts").CreatePersonalityDto) { return this.personalities.create(dto); }
+  updatePersonality(id: string, dto: import("./admin.contracts").UpdatePersonalityDto) { return this.personalities.update(id, dto); }
+  activatePersonality(id: string) { return this.personalities.activate(id); }
+  deactivatePersonality(id: string) { return this.personalities.deactivate(id); }
+  setDefaultPersonality(id: string) { return this.personalities.setDefault(id); }
   previewBroadcast(dto: BroadcastInputDto) { return this.broadcasts.preview(dto); }
   createBroadcast(dto: BroadcastInputDto) { return this.broadcasts.create(dto); }
   getBroadcasts(query: BroadcastListQuery) { return this.broadcasts.list(query); }

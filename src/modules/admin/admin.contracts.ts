@@ -87,6 +87,12 @@ export interface PromptItem {
   timesSent: number;
 }
 
+export interface AgentPersonalityItem { id: string; key: string; name: string; description: string; followUpStylePrompt: string; analysisStylePrompt: string; isActive: boolean; isDefault: boolean; sortOrder: number; createdAt: Date; updatedAt: Date; selectedUsersCount: number; }
+export interface CreatePersonalityDto { key: string; name: string; description?: string; followUpStylePrompt: string; analysisStylePrompt: string; isActive?: boolean; sortOrder?: number; }
+export type UpdatePersonalityDto = Partial<Pick<CreatePersonalityDto, "name" | "description" | "followUpStylePrompt" | "analysisStylePrompt" | "sortOrder">>;
+export interface AgentPromptRulesItem { id: string; followUpPrompt: string; analysisPrompt: string; createdAt: Date; updatedAt: Date; }
+export interface UpdateAgentPromptRulesDto { followUpPrompt: string; analysisPrompt: string; }
+
 export interface CreatePromptDto {
   topic: string;
   textContent?: string;
@@ -141,8 +147,9 @@ export const ADMIN_AUDIT_ACTIONS = [
   "settings.infrastructure.update",
   "broadcast.create",
   "broadcast.cancel",
+  "personality.create", "personality.update", "personality.activate", "personality.deactivate", "personality.set_default", "personality.rules.update",
 ] as const;
-export const ADMIN_AUDIT_ENTITY_TYPES = ["user", "prompt", "error_log", "runtime_settings", "broadcast"] as const;
+export const ADMIN_AUDIT_ENTITY_TYPES = ["user", "prompt", "error_log", "runtime_settings", "broadcast", "personality"] as const;
 export const ADMIN_AUDIT_OUTCOMES = ["success", "failure"] as const;
 export const ADMIN_AUDIT_FAILURE_CODES = [
   "validation_failed",

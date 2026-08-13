@@ -2,6 +2,7 @@ import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import { seedPrompts } from "./seed-prompts";
+import { seedPersonalities } from "./seed-personalities";
 
 export async function seedDatabase(
   prisma: PrismaClient,
@@ -17,6 +18,7 @@ export async function seedDatabase(
   }
 
   await seedPrompts(prisma);
+  await seedPersonalities(prisma);
 
   if (!adminUsername || !adminPassword) {
     console.warn(

@@ -101,14 +101,14 @@ test("deterministic user journey reaches an automatic report and a non-repeating
   };
   const llmCalls = { followUps: [], analyses: [] };
   const llm = {
-    async generateFollowUp(history, topic, tone) {
-      llmCalls.followUps.push({ history, topic, tone });
+    async generateFollowUp(history, topic, personality) {
+      llmCalls.followUps.push({ history, topic, personality });
       return llmCalls.followUps.length === 1
         ? "What did you like most about Rome?"
         : "Who would you travel with next time?";
     },
-    async analyzeSpeech(transcript, topic, language, tone) {
-      llmCalls.analyses.push({ transcript, topic, language, tone });
+    async analyzeSpeech(transcript, topic, language, personality) {
+      llmCalls.analyses.push({ transcript, topic, language, personality });
       return {
         version: 1,
         kind: "model",
@@ -116,6 +116,24 @@ test("deterministic user journey reaches an automatic report and a non-repeating
         improvementPoints: ["Use the past tense consistently."],
         overallScore: 8,
       };
+    },
+  };
+  const personalityPrompts = {
+    friendly: { key: "friendly", followUpPrompt: "Friendly follow-up", analysisPrompt: "Friendly analysis" },
+    playful: { key: "playful", followUpPrompt: "Playful follow-up", analysisPrompt: "Playful analysis" },
+    third: { key: "third", followUpPrompt: "Dynamic third follow-up", analysisPrompt: "Dynamic third analysis" },
+  };
+  const personalityService = {
+    listActive: async () => [
+      { key: "friendly", name: "Дружелюбный учитель", description: "", isDefault: true },
+      { key: "playful", name: "Шутливый", description: "", isDefault: false },
+      { key: "third", name: "Третий динамический", description: "", isDefault: false },
+    ],
+    resolveSelectedOrDefault: async (key) => personalityPrompts[key] ?? personalityPrompts.friendly,
+    selectForUser: async (userId, key) => {
+      const user = prisma.state.users.find((candidate) => candidate.id === userId);
+      user.agentTone = key;
+      return user;
     },
   };
 
@@ -126,6 +144,10 @@ test("deterministic user journey reaches an automatic report and a non-repeating
     conversationService,
     quota,
     llm,
+    undefined,
+    undefined,
+    undefined,
+    personalityService,
   );
   const runtimeConfig = {
     telegramBotToken: "123:test",
@@ -143,6 +165,9 @@ test("deterministic user journey reaches an automatic report and a non-repeating
     llm,
     reportHandler,
     runtimeConfig,
+    undefined,
+    undefined,
+    personalityService,
   );
   const startHandler = new StartHandler(
     userService,
@@ -151,7 +176,7 @@ test("deterministic user journey reaches an automatic report and a non-repeating
     scheduleService,
     dispatcher,
   );
-  const settingsHandler = new SettingsHandler(userService, scheduleService, streakService);
+  const settingsHandler = new SettingsHandler(userService, scheduleService, streakService, personalityService);
 
   const startReplies = [];
   const startContext = {
@@ -192,6 +217,7 @@ test("deterministic user journey reaches an automatic report and a non-repeating
   assert.ok(settingsCallbacks.includes("toggle_daily"));
   assert.ok(settingsCallbacks.includes("set_time_13_0"));
   assert.ok(settingsCallbacks.includes("set_tone_playful"));
+  assert.ok(settingsCallbacks.includes("set_tone_third"));
   assert.deepEqual(
     {
       dailyPromptEnabled: prisma.state.users[0].dailyPromptEnabled,
@@ -209,6 +235,17 @@ test("deterministic user journey reaches an automatic report and a non-repeating
     },
     "/settings renders the persisted defaults without mutating them",
   );
+
+  const toneEdits = [];
+  await settingsHandler.handleToneSelect({
+    from: { id: 4242, username: "alice" },
+    update: { update_id: 3 },
+    callbackQuery: { id: "tone-third", data: "set_tone_third" },
+    editMessageText: async (message, options) => toneEdits.push({ message, options }),
+    reply: async (message, options) => toneEdits.push({ message, options }),
+  }, "set_tone_third");
+  assert.equal(prisma.state.users[0].agentTone, "third");
+  assert.match(toneEdits[0].message, /Третий динамический/);
 
   const voiceReplies = [];
   const originalFetch = global.fetch;
@@ -240,7 +277,7 @@ test("deterministic user journey reaches an automatic report and a non-repeating
     transcript: transcripts.join(" "),
     topic: "Travel",
     language: "en",
-    tone: "friendly",
+    personality: personalityPrompts.third,
   });
   assert.equal(prisma.state.conversationMessages.length, 5);
   assert.deepEqual(

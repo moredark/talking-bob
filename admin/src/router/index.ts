@@ -14,6 +14,7 @@ const router = createRouter({
         { path: "users", name: "users", component: () => import("../pages/UsersPage.vue") },
         { path: "users/:id", name: "user-detail", component: () => import("../pages/UserDetailPage.vue") },
         { path: "prompts", name: "prompts", component: () => import("../pages/PromptsPage.vue") },
+        { path: "personalities", name: "personalities", component: () => import("../pages/PersonalitiesPage.vue") },
         { path: "topics", name: "topics", component: () => import("../pages/TopicsPage.vue") },
         { path: "error-logs", name: "error-logs", component: () => import("../pages/ErrorLogsPage.vue") },
         { path: "audit-logs", name: "audit-logs", component: () => import("../pages/AuditLogsPage.vue") },

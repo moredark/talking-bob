@@ -294,3 +294,27 @@ export class AdminRuntimeSettingsPatchPipe implements PipeTransform<unknown, Upd
     return { expectedVersion: body.expectedVersion as number, values: normalized };
   }
 }
+
+const PERSONALITY_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+function personalityText(body:Record<string,unknown>,key:string,min:number,max:number,multiline=false):string|undefined{
+  const value=body[key]; if(value===undefined)return undefined; if(typeof value!=="string")invalid(`${key} must be a string`);
+  const normalized=(value as string).trim(); if(normalized.length<min||normalized.length>max)invalid(`${key} must contain ${min} to ${max} characters`);
+  const controls=multiline?/[^\S\r\n\t]|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/:/[\u0000-\u001f\u007f]/;
+  if(controls.test(normalized)&&!multiline)invalid(`${key} contains invalid characters`);
+  if(multiline&&/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(normalized))invalid(`${key} contains invalid characters`);
+  return normalized;
+}
+function validatePersonality(value:unknown,patch:boolean){const body=objectBody(value);const allowed=patch?new Set(["name","description","followUpStylePrompt","analysisStylePrompt","sortOrder"]):new Set(["key","name","description","followUpStylePrompt","analysisStylePrompt","isActive","sortOrder"]);rejectUnknown(body,allowed);if(patch&&Object.keys(body).length===0)invalid("Patch body must not be empty");const result:Record<string,unknown>={};if(!patch){if(typeof body.key!=="string"||!PERSONALITY_KEY_PATTERN.test(body.key))invalid("key is invalid");result.key=body.key;}for(const [key,min,max,multi] of [["name",1,80,false],["description",0,240,false],["followUpStylePrompt",1,8000,true],["analysisStylePrompt",1,8000,true]] as const){const parsed=personalityText(body,key,min,max,multi);if(parsed!==undefined)result[key]=parsed;else if(!patch&&key!=="description")invalid(`${key} is required`);}if(!patch&&body.isActive!==undefined){if(typeof body.isActive!=="boolean")invalid("isActive must be a boolean");result.isActive=body.isActive;}if(body.sortOrder!==undefined){if(typeof body.sortOrder!=="number"||!Number.isInteger(body.sortOrder)||body.sortOrder<0||body.sortOrder>2147483647)invalid("sortOrder is invalid");result.sortOrder=body.sortOrder;}return result;}
+export class AdminCreatePersonalityPipe implements PipeTransform<unknown, import("./admin.contracts").CreatePersonalityDto>{transform(value:unknown){return validatePersonality(value,false) as unknown as import("./admin.contracts").CreatePersonalityDto;}}
+export class AdminUpdatePersonalityPipe implements PipeTransform<unknown, import("./admin.contracts").UpdatePersonalityDto>{transform(value:unknown){return validatePersonality(value,true) as import("./admin.contracts").UpdatePersonalityDto;}}
+
+export class AdminUpdateAgentPromptRulesPipe implements PipeTransform<unknown, import("./admin.contracts").UpdateAgentPromptRulesDto> {
+  transform(value: unknown): import("./admin.contracts").UpdateAgentPromptRulesDto {
+    const body = objectBody(value);
+    rejectUnknown(body, new Set(["followUpPrompt", "analysisPrompt"]));
+    const followUpPrompt = personalityText(body, "followUpPrompt", 1, 8000, true);
+    const analysisPrompt = personalityText(body, "analysisPrompt", 1, 8000, true);
+    if (followUpPrompt === undefined || analysisPrompt === undefined) invalid("followUpPrompt and analysisPrompt are required");
+    return { followUpPrompt, analysisPrompt };
+  }
+}

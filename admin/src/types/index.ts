@@ -104,6 +104,51 @@ export interface UpdatePromptDto {
   sortOrder?: number;
 }
 
+export interface Personality {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  followUpStylePrompt: string;
+  analysisStylePrompt: string;
+  isActive: boolean;
+  isDefault: boolean;
+  sortOrder: number;
+  selectedUsersCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PersonalityRules {
+  id: "default";
+  followUpPrompt: string;
+  analysisPrompt: string;
+  updatedAt: string;
+}
+
+export interface UpdatePersonalityRulesDto {
+  followUpPrompt: string;
+  analysisPrompt: string;
+}
+
+export interface CreatePersonalityDto {
+  key: string;
+  name: string;
+  description?: string;
+  followUpStylePrompt: string;
+  analysisStylePrompt: string;
+  isActive?: boolean;
+  sortOrder?: number;
+}
+
+export interface UpdatePersonalityDto {
+  name?: string;
+  description?: string;
+  followUpStylePrompt?: string;
+  analysisStylePrompt?: string;
+  sortOrder?: number;
+}
+
 export interface UpdateUserDto {
   dailyPromptEnabled?: boolean;
   languageLevel?: string | null;

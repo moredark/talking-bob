@@ -45,6 +45,8 @@ const EXPECTED_MIGRATIONS = [
   "20260810150000_admin_broadcasts",
   "20260810160000_admin_analytics_facts",
   "20260811120000_add_streaks",
+  "20260812120000_agent_personalities",
+  "20260813120000_split_agent_prompt_rules",
 ];
 
 const prisma = new PrismaClient();
@@ -106,7 +108,7 @@ async function createUser() {
 test("Admin MVP PostgreSQL rollout journey", async (t) => {
   await prisma.$connect();
 
-  await t.test("fresh schema contains all 19 ordered migrations and analytics facts", async () => {
+  await t.test("fresh schema contains all 21 ordered migrations and analytics facts", async () => {
     const migrations = await prisma.$queryRaw`
       SELECT migration_name
       FROM "_prisma_migrations"

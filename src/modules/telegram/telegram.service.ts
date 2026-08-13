@@ -183,7 +183,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         ctx.callbackQuery.data,
       ),
     );
-    this.bot.callbackQuery(/^set_tone_(friendly|playful)$/, (ctx) =>
+    this.bot.callbackQuery(/^set_tone_([a-z0-9][a-z0-9_-]{0,31})$/, (ctx) =>
       this.settingsHandler.handleToneSelect(ctx, ctx.callbackQuery.data),
     );
 

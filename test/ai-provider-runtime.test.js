@@ -207,6 +207,68 @@ test("LLM marks a valid speech analysis response as model output", async () => {
   assert.equal(calls, 1);
 });
 
+test("LLM forwards one complete personality analysis snapshot unchanged across retry", async () => {
+  const service = new LLMService(config(), new AiRequestLimiterService(1));
+  const payloads = [];
+  let tokenReads = 0;
+  service.settings = {
+    productNumber: (key) => { assert.equal(key, "LLM_ANALYSIS_MAX_TOKENS"); tokenReads += 1; return 256; },
+  };
+  service.requestTracedCompletion = async (payload) => {
+    payloads.push(payload);
+    return { content: null };
+  };
+
+  const personality = {
+    key: "third",
+    followUpPrompt: "THIRD FOLLOW-UP PROMPT\nKeep its exact formatting.",
+    analysisPrompt: "THIRD ANALYSIS PROMPT\nReturn only the configured schema.",
+  };
+  await service.analyzeSpeech("I went there by train", "Weekend travel", "en", personality);
+
+  assert.equal(tokenReads, 1);
+  assert.equal(payloads.length, 2);
+  assert.deepEqual(payloads[0].messages, payloads[1].messages);
+  assert.deepEqual(payloads[0].messages, [
+    { role: "system", content: personality.analysisPrompt },
+    { role: "user", content: "Topic: \"Weekend travel\"\nStudent: \"I went there by train\"\nAnalyze this English speech." },
+  ]);
+});
+
+test("LLM forwards the complete personality follow-up snapshot and preserves topic/history ordering", async () => {
+  const service = new LLMService(config(), new AiRequestLimiterService(1));
+  let tokenReads = 0;
+  let payload;
+  service.settings = {
+    productNumber: (key) => { assert.equal(key, "LLM_FOLLOWUP_MAX_TOKENS"); tokenReads += 1; return 128; },
+  };
+  service.requestTracedCompletion = async (candidate) => {
+    payload = candidate;
+    return { content: "What happened next?" };
+  };
+  const history = Array.from({ length: 8 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" : "assistant",
+    content: `message-${index}`,
+  }));
+
+  const personality = {
+    key: "third",
+    followUpPrompt: "THIRD FOLLOW-UP PROMPT\nUse the entire stored prompt.",
+    analysisPrompt: "THIRD ANALYSIS PROMPT",
+  };
+  assert.equal(await service.generateFollowUp(history, "City life", personality), "What happened next?");
+
+  assert.equal(tokenReads, 1);
+  assert.equal(payload.messages[0].content, `${personality.followUpPrompt}\n\nConversation topic: "City life"`);
+  assert.deepEqual(payload.messages.slice(1), [
+    { role: "user", content: "message-2" },
+    { role: "assistant", content: "message-3" },
+    { role: "user", content: "message-4" },
+    { role: "assistant", content: "message-5" },
+    { role: "user", content: "message-6" },
+    { role: "assistant", content: "message-7" },
+  ]);
+});
 test("LLM marks valid JSON with an invalid analysis schema as fallback", async () => {
   const service = new LLMService(config(), new AiRequestLimiterService(1));
   const originalFetch = global.fetch;

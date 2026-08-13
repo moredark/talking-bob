@@ -62,7 +62,7 @@ function context(messageId = 10, replyImpl) {
 function createSubject({ claimResult, response = {}, llm = {}, messages, observability } = {}) {
   const calls = {
     claim: [], completeGeneration: [], createDelivery: [], begin: [],
-    completeChunk: [], failGeneration: [], definite: [], ambiguous: [], llm: [],
+    completeChunk: [], failGeneration: [], definite: [], ambiguous: [], llm: [], personality: [],
   };
   const responseService = {
     getResponseById: async () => response.currentResponse ?? null,
@@ -133,6 +133,13 @@ function createSubject({ claimResult, response = {}, llm = {}, messages, observa
     },
     undefined,
     observability,
+    undefined,
+    {
+      resolveSelectedOrDefault: async (key) => {
+        calls.personality.push(key);
+        return { key: "friendly", followUpPrompt: "Friendly follow-up", analysisPrompt: "Friendly analysis" };
+      },
+    },
   );
   return { calls, handler };
 }
@@ -145,6 +152,10 @@ test("report AI trace inherits the active update correlation", async () => {
   response.completeGeneration = async (data) => { response.activeChunks = data.chunks; return { outcome: "claimed", claim: deliveryClaim(data.chunks) }; };
   const { ctx } = context();
   await observability.run({ correlationId: "tg-report-10" }, () => handler.handle(ctx));
+  assert.deepEqual(calls.personality, ["friendly"]);
+  assert.deepEqual(calls.llm[0][3], {
+    key: "friendly", followUpPrompt: "Friendly follow-up", analysisPrompt: "Friendly analysis",
+  });
   assert.deepEqual(calls.llm[0][4], {
     userId: "user-1", userPromptId: "user-prompt-1", userResponseId: "response-1",
     requestId: "response-1", correlationId: "tg-report-10",

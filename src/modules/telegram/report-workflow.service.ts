@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { Context, GrammyError, HttpError, InlineKeyboard } from "grammy";
-import { AgentTone, ILLMService, LLM_SERVICE } from "../ai";
+import { AgentPersonalityPrompt, ILLMService, LLM_SERVICE } from "../ai";
 import { ConversationService } from "../conversation";
 import { ErrorLogService, ObservabilityContextService } from "../error-log";
 import { DeliveryClaim, GenerationClaim, ResponseService } from "../response";
@@ -26,7 +26,7 @@ export class ReportWorkflowService {
     ctx: Context,
     userPromptId: string,
     topic: string,
-    tone: AgentTone,
+    personality: AgentPersonalityPrompt | undefined,
     claim: GenerationClaim,
   ): Promise<void> {
     this.observability?.enrich({ requestId: claim.responseId });
@@ -35,7 +35,7 @@ export class ReportWorkflowService {
     const transcript = messages.filter((m) => m.role === "user").map((m) => m.content).join(" ");
     let deliveryClaim: DeliveryClaim | null = null;
     try {
-      const feedback = await this.llmService.analyzeSpeech(transcript, topic, "en", tone, claim.userId ? {
+      const feedback = await this.llmService.analyzeSpeech(transcript, topic, "en", personality, claim.userId ? {
         userId: claim.userId, userPromptId: claim.userPromptId ?? userPromptId,
         userResponseId: claim.responseId, requestId: claim.responseId,
         correlationId: this.observability?.current()?.correlationId,

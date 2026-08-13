@@ -27,6 +27,11 @@ import type {
   CreateBroadcastDto,
   AdminAnalytics,
   AnalyticsDays,
+  Personality,
+  CreatePersonalityDto,
+  PersonalityRules,
+  UpdatePersonalityRulesDto,
+  UpdatePersonalityDto,
 } from "../types";
 
 export const adminApi = {
@@ -115,6 +120,47 @@ export const adminApi = {
 
   deletePrompt: async (id: string): Promise<void> => {
     await apiClient.delete(`/admin/prompts/${id}`);
+  },
+
+  // Personalities
+  getPersonalities: async (): Promise<Personality[]> => {
+    const response = await apiClient.get<Personality[]>("/admin/personalities");
+    return response.data;
+  },
+
+  getPersonalityRules: async (): Promise<PersonalityRules> => {
+    const response = await apiClient.get<PersonalityRules>("/admin/personalities/rules");
+    return response.data;
+  },
+
+  updatePersonalityRules: async (data: UpdatePersonalityRulesDto): Promise<PersonalityRules> => {
+    const response = await apiClient.patch<PersonalityRules>("/admin/personalities/rules", data);
+    return response.data;
+  },
+
+  createPersonality: async (data: CreatePersonalityDto): Promise<Personality> => {
+    const response = await apiClient.post<Personality>("/admin/personalities", data);
+    return response.data;
+  },
+
+  updatePersonality: async (id: string, data: UpdatePersonalityDto): Promise<Personality> => {
+    const response = await apiClient.patch<Personality>(`/admin/personalities/${id}`, data);
+    return response.data;
+  },
+
+  activatePersonality: async (id: string): Promise<Personality> => {
+    const response = await apiClient.post<Personality>(`/admin/personalities/${id}/activate`);
+    return response.data;
+  },
+
+  deactivatePersonality: async (id: string): Promise<Personality> => {
+    const response = await apiClient.post<Personality>(`/admin/personalities/${id}/deactivate`);
+    return response.data;
+  },
+
+  setDefaultPersonality: async (id: string): Promise<Personality> => {
+    const response = await apiClient.post<Personality>(`/admin/personalities/${id}/set-default`);
+    return response.data;
   },
 
   // Error Logs

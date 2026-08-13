@@ -1,5 +1,7 @@
 import { AiProviderTraceContext } from "../services/ai-provider-trace-writer.service";
 export type AgentTone = "friendly" | "playful";
+import type { AgentPersonalityPrompt } from "../../personality";
+export type { AgentPersonalityPrompt } from "../../personality";
 
 export interface FeedbackResult {
   summary: string;
@@ -22,14 +24,14 @@ export interface ILLMService {
     transcript: string,
     topic: string,
     targetLanguage?: string,
-    tone?: AgentTone,
+    personality?: AgentPersonalityPrompt | AgentTone,
     trace?: AiProviderTraceContext,
   ): Promise<SpeechAnalysisResult>;
 
   generateFollowUp(
     conversationHistory: ConversationMessage[],
     topic: string,
-    tone?: AgentTone,
+    personality?: AgentPersonalityPrompt | AgentTone,
     trace?: AiProviderTraceContext,
   ): Promise<string>;
 }

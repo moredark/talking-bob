@@ -1,10 +1,12 @@
 export { AiModule } from "./ai.module";
 
+
 export {
   IWhisperService,
   TranscriptionResult,
   WHISPER_SERVICE,
   ILLMService,
+  AgentPersonalityPrompt,
   AgentTone,
   FeedbackResult,
   SpeechAnalysisResult,

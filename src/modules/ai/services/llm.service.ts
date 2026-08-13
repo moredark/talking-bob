@@ -6,7 +6,9 @@ import {
   BoundedHttpError,
 } from "../../../infrastructure/http";
 import { RuntimeSettingsService } from "../../../config/runtime-settings.service";
+import { FRIENDLY_ANALYSIS_SYSTEM_PROMPT, FRIENDLY_FOLLOWUP_SYSTEM_PROMPT, PLAYFUL_ANALYSIS_SYSTEM_PROMPT, PLAYFUL_FOLLOWUP_SYSTEM_PROMPT } from "../../../config/llm-system-prompts";
 import {
+  AgentPersonalityPrompt,
   AgentTone,
   ILLMService,
   SpeechAnalysisResult,
@@ -26,19 +28,6 @@ class LlmProviderStatusError extends Error {
     this.name = "LlmProviderStatusError";
   }
 }
-
-const ANALYSIS_SCHEMA_PROMPT = `Return ONLY valid JSON:
-{
-  "summary": "Короткий комментарий на русском (1 предложение)",
-  "improvementPoints": ["Список ошибок/улучшений без дублей, на русском"],
-  "overallScore": 7
-}
-
-Rules:
-- overallScore: integer from 1 to 10
-- one combined list in improvementPoints
-- no duplicates
-- if no issues, improvementPoints must be []`;
 
 @Injectable()
 export class LLMService implements ILLMService {
@@ -67,12 +56,12 @@ export class LLMService implements ILLMService {
     transcript: string,
     topic: string,
     targetLanguage: string = "en",
-    tone: AgentTone = "friendly",
+    personality?: AgentPersonalityPrompt | AgentTone,
     trace?: AiProviderTraceContext,
   ): Promise<SpeechAnalysisResult> {
     const startedAt = Date.now();
     const analysisMaxTokens = this.settings.productNumber("LLM_ANALYSIS_MAX_TOKENS");
-    const systemPrompt = this.buildAnalysisSystemPrompt(tone);
+    const systemPrompt = typeof personality === "object" ? personality.analysisPrompt : personality === "playful" ? PLAYFUL_ANALYSIS_SYSTEM_PROMPT : FRIENDLY_ANALYSIS_SYSTEM_PROMPT;
 
     const userPrompt = `Topic: "${topic}"\nStudent: "${this.shortenText(transcript, 1800)}"\nAnalyze this English speech.`;
 
@@ -122,7 +111,7 @@ export class LLMService implements ILLMService {
   async generateFollowUp(
     conversationHistory: ConversationMessage[],
     topic: string,
-    tone: AgentTone = "friendly",
+    personality?: AgentPersonalityPrompt | AgentTone,
     trace?: AiProviderTraceContext,
   ): Promise<string> {
     const startedAt = Date.now();
@@ -136,7 +125,7 @@ export class LLMService implements ILLMService {
     const messages = [
       {
         role: "system",
-        content: `${this.buildFollowUpSystemPrompt(tone)}\n\nConversation topic: "${topic}"`,
+        content: `${typeof personality === "object" ? personality.followUpPrompt : personality === "playful" ? PLAYFUL_FOLLOWUP_SYSTEM_PROMPT : FRIENDLY_FOLLOWUP_SYSTEM_PROMPT}\n\nConversation topic: "${topic}"`,
       },
       ...recentHistory,
     ];
@@ -289,46 +278,6 @@ export class LLMService implements ILLMService {
     }
 
     return null;
-  }
-
-  private buildFollowUpSystemPrompt(tone: AgentTone): string {
-    const basePrompt = `You are an English speaking partner.
-Rules:
-- English only
-- 1 short follow-up question
-- max 2 short sentences
-- no grammar correction in this step`;
-
-    if (tone === "playful") {
-      return `${basePrompt}
-- Use playful, slightly teasing humor, but stay supportive and never insulting
-- Accept slang and informal speech naturally
-- If slang appears, briefly explain or extend it with another useful slang phrase`;
-    }
-
-    return `${basePrompt}
-- Be encouraging and warm, like a friendly teacher
-- If the student's response is very short or unclear, gently encourage them to elaborate`;
-  }
-
-  private buildAnalysisSystemPrompt(tone: AgentTone): string {
-    const basePrompt = `You are an English tutor for Russian speakers.
-Respond in Russian.
-${ANALYSIS_SCHEMA_PROMPT}`;
-
-    if (tone === "playful") {
-      return `${basePrompt}
-Style rules for "playful" tone:
-- Use light playful humor in wording, with a bit of cheeky style
-- Do not shame or insult the student
-- Do not criticize slang or informal wording
-- Treat slang as valid conversational English and, when helpful, suggest extra slang alternatives`;
-    }
-
-    return `${basePrompt}
-Style rules for "friendly" tone:
-- Be encouraging, clear, and kind
-- Use calm teacher-like explanations`;
   }
 
   private parseJsonResponse(content: string): SpeechAnalysisResult {

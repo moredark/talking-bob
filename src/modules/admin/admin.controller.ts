@@ -1,12 +1,12 @@
 import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, UseFilters, UseGuards, UseInterceptors } from "@nestjs/common";
 import { AuthGuard } from "../auth";
-import { AdminAuditLogsQuery, AdminSessionsQuery, AnalyticsDays, BroadcastDetailQuery, BroadcastInputDto, BroadcastListQuery, CreatePromptDto, ErrorLogsQuery, PaginationQuery, UpdatePromptDto, UpdateRuntimeSettingsDto, UpdateUserDto } from "./admin.contracts";
+import { AdminAuditLogsQuery, AdminSessionsQuery, AnalyticsDays, BroadcastDetailQuery, BroadcastInputDto, BroadcastListQuery, CreatePersonalityDto, CreatePromptDto, ErrorLogsQuery, PaginationQuery, UpdateAgentPromptRulesDto, UpdatePersonalityDto, UpdatePromptDto, UpdateRuntimeSettingsDto, UpdateUserDto } from "./admin.contracts";
 import { AdminBroadcastDetailQueryPipe, AdminBroadcastInputPipe, AdminBroadcastListQueryPipe } from "./admin-broadcast-validation.pipe";
 import { AdminAuditInterceptor } from "./admin-audit.interceptor";
 import { AdminAuditMutation } from "./admin-audit.decorator";
 import { AdminExceptionFilter } from "./admin-exception.filter";
 import { AdminService } from "./admin.service";
-import { AdminAnalyticsQueryPipe, AdminAuditLogsQueryPipe, AdminCreatePromptPipe, AdminDaysPipe, AdminErrorLogsQueryPipe, AdminPaginationPipe, AdminRuntimeSettingsPatchPipe, AdminSessionsQueryPipe, AdminUpdatePromptPipe, AdminUpdateUserPipe, AdminUuidPipe } from "./admin-validation.pipe";
+import { AdminAnalyticsQueryPipe, AdminAuditLogsQueryPipe, AdminCreatePersonalityPipe, AdminCreatePromptPipe, AdminDaysPipe, AdminErrorLogsQueryPipe, AdminPaginationPipe, AdminRuntimeSettingsPatchPipe, AdminSessionsQueryPipe, AdminUpdateAgentPromptRulesPipe, AdminUpdatePersonalityPipe, AdminUpdatePromptPipe, AdminUpdateUserPipe, AdminUuidPipe } from "./admin-validation.pipe";
 
 @Controller("admin")
 @UseGuards(AuthGuard)
@@ -14,6 +14,36 @@ import { AdminAnalyticsQueryPipe, AdminAuditLogsQueryPipe, AdminCreatePromptPipe
 @UseInterceptors(AdminAuditInterceptor)
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
+
+  @Get("personalities")
+  getPersonalities() { return this.adminService.getPersonalities(); }
+  @Get("personalities/rules")
+  getPersonalityRules() { return this.adminService.getPersonalityRules(); }
+
+  @Patch("personalities/rules")
+  @AdminAuditMutation("personality.rules.update", "personality")
+  updatePersonalityRules(@Body(AdminUpdateAgentPromptRulesPipe) dto: UpdateAgentPromptRulesDto) { return this.adminService.updatePersonalityRules(dto); }
+
+
+  @Post("personalities")
+  @AdminAuditMutation("personality.create", "personality")
+  createPersonality(@Body(AdminCreatePersonalityPipe) dto: CreatePersonalityDto) { return this.adminService.createPersonality(dto); }
+
+  @Patch("personalities/:id")
+  @AdminAuditMutation("personality.update", "personality")
+  updatePersonality(@Param("id", AdminUuidPipe) id: string, @Body(AdminUpdatePersonalityPipe) dto: UpdatePersonalityDto) { return this.adminService.updatePersonality(id, dto); }
+
+  @Post("personalities/:id/activate")
+  @AdminAuditMutation("personality.activate", "personality")
+  activatePersonality(@Param("id", AdminUuidPipe) id: string) { return this.adminService.activatePersonality(id); }
+
+  @Post("personalities/:id/deactivate")
+  @AdminAuditMutation("personality.deactivate", "personality")
+  deactivatePersonality(@Param("id", AdminUuidPipe) id: string) { return this.adminService.deactivatePersonality(id); }
+
+  @Post("personalities/:id/set-default")
+  @AdminAuditMutation("personality.set_default", "personality")
+  setDefaultPersonality(@Param("id", AdminUuidPipe) id: string) { return this.adminService.setDefaultPersonality(id); }
 
   @Get("dashboard")
   getDashboard() { return this.adminService.getDashboardStats(); }

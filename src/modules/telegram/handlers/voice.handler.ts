@@ -10,12 +10,14 @@ import { ConversationService } from "../../conversation";
 import { RateLimitService } from "../../rate-limit";
 import {
   WHISPER_SERVICE, IWhisperService, LLM_SERVICE, ILLMService,
-  ConversationMessage, AgentTone,
+  ConversationMessage, AgentPersonalityPrompt,
 } from "../../ai";
 import { ReportWorkflowService } from "../report-workflow.service";
+import { PersonalityService } from "../../personality";
 import { ErrorLogService, ObservabilityContextService } from "../../error-log";
 
 type VoiceProcessingStage =
+  | "personality_resolve"
   | "telegram_download"
   | "whisper_transcribe"
   | "conversation_accept"
@@ -40,6 +42,7 @@ export class VoiceHandler {
     @Inject(RUNTIME_CONFIG) private readonly runtimeConfig: RuntimeConfig,
     @Optional() private readonly errorLog?: ErrorLogService,
     @Optional() private readonly observability?: ObservabilityContextService,
+    @Optional() private readonly personalityService?: PersonalityService,
   ) {}
 
   async handle(ctx: Context): Promise<void> {
@@ -77,12 +80,15 @@ export class VoiceHandler {
     }
     const prompt = await this.promptService.getPromptById(userPrompt.promptId);
     const topic = prompt?.topic ?? "General";
-    const tone: AgentTone = user.agentTone === "playful" ? "playful" : "friendly";
     const typing = this.startTypingIndicator(ctx);
     const startedAt = Date.now();
-    let stage: VoiceProcessingStage = "telegram_download";
+    let stage: VoiceProcessingStage = "personality_resolve";
 
     try {
+      const personality = this.personalityService
+        ? await this.personalityService.resolveSelectedOrDefault(user.agentTone)
+        : undefined;
+      stage = "telegram_download";
       const audio = await this.downloadVoiceFile(ctx, voice.file_id, maxFileSizeBytes);
       stage = "whisper_transcribe";
       const { text: transcript } = await this.whisperService.transcribe(audio, "en");
@@ -97,7 +103,7 @@ export class VoiceHandler {
       if (accepted.generationClaim) {
         stage = "report_generate";
         await this.reportWorkflow.generateClaimedReport(
-          ctx, userPrompt.id, topic, tone, accepted.generationClaim,
+          ctx, userPrompt.id, topic, personality, accepted.generationClaim,
         );
         return;
       }
@@ -109,7 +115,7 @@ export class VoiceHandler {
         role: message.role as "user" | "assistant", content: message.content,
       }));
       stage = "llm_follow_up";
-      const followUp = await this.llmService.generateFollowUp(history, topic, tone, {
+      const followUp = await this.llmService.generateFollowUp(history, topic, personality, {
         userId: user.id, userPromptId: userPrompt.id, requestId: this.requestKey(ctx),
         correlationId: this.observability?.current()?.correlationId,
       });

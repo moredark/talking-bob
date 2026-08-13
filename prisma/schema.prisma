@@ -113,11 +113,39 @@ model User {
   activityDays        UserActivityDay[]
   streakDays          StreakDay[]
   streakReminders     StreakReminder[]
+  personality         AgentPersonality @relation(fields: [agentTone], references: [key], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([nextPromptAt])
   @@index([nextStreakReminderAt], map: "users_next_streak_reminder_at_idx")
   @@index([lastUserMessageAt], map: "users_lastUserMessageAt_idx")
   @@map("users")
+}
+
+model AgentPersonality {
+  id                  String   @id @default(uuid()) @db.Uuid
+  key                 String   @unique @db.VarChar(32)
+  name                String   @db.VarChar(80)
+  description         String   @db.VarChar(240)
+  followUpStylePrompt String
+  analysisStylePrompt String
+  isActive            Boolean  @default(true)
+  isDefault           Boolean  @default(false)
+  sortOrder           Int      @default(0)
+  createdAt           DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime @updatedAt @db.Timestamptz(3)
+  users User[]
+  @@index([isActive, sortOrder, createdAt, id], map: "agent_personalities_active_sort_idx")
+  @@map("agent_personalities")
+}
+
+model AgentPromptRules {
+  id             String   @id @default("default") @db.VarChar(16)
+  followUpPrompt String
+  analysisPrompt String
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+
+  @@map("agent_prompt_rules")
 }
 
 model Prompt {

@@ -39,6 +39,7 @@ function createSubject({
     getFile: 0,
     whisper: 0,
     llm: 0,
+    personality: 0,
     precheck: 0,
     accept: 0,
     addAssistant: 0,
@@ -93,8 +94,9 @@ function createSubject({
       },
     },
     {
-      generateFollowUp: async () => {
+      generateFollowUp: async (...args) => {
         calls.llm += 1;
+        calls.llmArgs = args;
         return "What did you enjoy most?";
       },
     },
@@ -104,6 +106,15 @@ function createSubject({
       },
     },
     config,
+    undefined,
+    undefined,
+    {
+      resolveSelectedOrDefault: async (key) => {
+        calls.personality += 1;
+        assert.equal(key, "friendly");
+        return { key: "friendly", followUpPrompt: "Friendly follow-up", analysisPrompt: "Friendly analysis" };
+      },
+    },
   );
   handler.settings = {
     productNumber: (key) => {
@@ -186,6 +197,10 @@ test("VoiceHandler accepts missing file_size and clears typing indicator on succ
   assert.equal(calls.getFile, 1);
   assert.equal(calls.whisper, 1);
   assert.equal(calls.llm, 1);
+  assert.equal(calls.personality, 1);
+  assert.deepEqual(calls.llmArgs[2], {
+    key: "friendly", followUpPrompt: "Friendly follow-up", analysisPrompt: "Friendly analysis",
+  });
   assert.deepEqual(cleared, [timer]);
   assert.match(calls.replies.at(-1), /enjoy most/i);
 });

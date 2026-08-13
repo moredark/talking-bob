@@ -15,6 +15,7 @@ import { AiModule } from "../ai";
 import { ScheduleModule } from "../schedule";
 import { ReportWorkflowService } from "./report-workflow.service";
 import { BroadcastModule } from "../broadcast";
+import { PersonalityModule } from "../personality";
 import { StreakModule } from "../streak";
 
 @Module({
@@ -28,6 +29,7 @@ import { StreakModule } from "../streak";
     ScheduleModule,
     BroadcastModule,
     StreakModule,
+    PersonalityModule,
   ],
   providers: [
     TelegramService,

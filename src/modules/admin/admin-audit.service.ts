@@ -170,6 +170,13 @@ export class AdminAuditService {
       const bannedAt = this.instantOrNull(source.bannedAt);
       if (bannedAt !== undefined) result.bannedAt = bannedAt;
       if (typeof source.hasBannedReason === "boolean") result.hasBannedReason = source.hasBannedReason;
+    } else if (action.startsWith("personality.")) {
+      if (typeof source.key === "string" && /^[a-z0-9][a-z0-9_-]{0,31}$/.test(source.key)) result.key = source.key;
+      if (typeof source.isActive === "boolean") result.isActive = source.isActive;
+      if (typeof source.isDefault === "boolean") result.isDefault = source.isDefault;
+      if (this.nonNegativeInt(source.sortOrder) !== null) result.sortOrder = source.sortOrder;
+      if (Array.isArray(source.changedFields) && source.changedFields.length <= 8 && source.changedFields.every((field) => typeof field === "string" && ["name","description","followUpStylePrompt","analysisStylePrompt","followUpPrompt","analysisPrompt","sortOrder","isActive","isDefault","key"].includes(field))) result.changedFields = source.changedFields;
+      const reassigned = this.nonNegativeInt(source.reassignedUserCount); if (reassigned !== null) result.reassignedUserCount = reassigned;
     } else if (action.startsWith("prompt.")) {
       if (typeof source.difficulty === "string" && ["easy", "medium", "hard"].includes(source.difficulty)) result.difficulty = source.difficulty;
       if (Array.isArray(source.tags) && source.tags.length <= 6 && source.tags.every((tag) => typeof tag === "string" && ADMIN_PROMPT_TAGS.includes(tag as never)) && new Set(source.tags).size === source.tags.length) result.tags = source.tags;

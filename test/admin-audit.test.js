@@ -179,7 +179,7 @@ test("audit interceptor snapshots JWT actor, echoes normalized IDs, and audits o
   });
 });
 
-test("all ten and only ten admin mutations map to audit actions", () => {
+test("all sixteen and only sixteen admin mutations map to audit actions", () => {
   const reflector = new Reflector();
   const decorated = [];
   const mappings = [
@@ -193,6 +193,12 @@ test("all ten and only ten admin mutations map to audit actions", () => {
     ["updateInfrastructureSettings", "settings.infrastructure.update", "runtime_settings"],
     ["createBroadcast", "broadcast.create", "broadcast"],
     ["cancelBroadcast", "broadcast.cancel", "broadcast"],
+    ["createPersonality", "personality.create", "personality"],
+    ["updatePersonality", "personality.update", "personality"],
+    ["activatePersonality", "personality.activate", "personality"],
+    ["deactivatePersonality", "personality.deactivate", "personality"],
+    ["setDefaultPersonality", "personality.set_default", "personality"],
+    ["updatePersonalityRules", "personality.rules.update", "personality"],
   ];
   const mutationSources = [
     "src/modules/admin/admin-users.service.ts",
@@ -200,12 +206,13 @@ test("all ten and only ten admin mutations map to audit actions", () => {
     "src/modules/admin/admin-error-logs.service.ts",
     "src/modules/admin/admin-settings.service.ts",
     "src/modules/admin/admin-broadcasts.service.ts",
+    "src/modules/admin/admin-personalities.service.ts",
   ].map((path) => readFileSync(path, "utf8")).join("\n");
   for (const [handler, action, entityType] of mappings) {
     const metadata = reflector.get(ADMIN_AUDIT_MUTATION_METADATA, AdminController.prototype[handler]);
     assert.deepEqual(metadata, { action, entityType });
     decorated.push(handler);
-    if (action.startsWith("settings.") || action.startsWith("broadcast.")) {
+    if (action.startsWith("settings.") || action.startsWith("broadcast.") || action.startsWith("personality.")) {
       assert.match(mutationSources, new RegExp(`"${action}"`));
       assert.match(mutationSources, /runSuccess\(/);
     } else {
@@ -213,8 +220,8 @@ test("all ten and only ten admin mutations map to audit actions", () => {
   }
   }
   assert.equal(reflector.get(ADMIN_AUDIT_MUTATION_METADATA, AdminController.prototype.getAuditLogs), undefined);
-  assert.equal(decorated.length, 10);
-  assert.equal((readFileSync("src/modules/admin/admin.controller.ts", "utf8").match(/@AdminAuditMutation\(/g) ?? []).length, 10);
+  assert.equal(decorated.length, 16);
+  assert.equal((readFileSync("src/modules/admin/admin.controller.ts", "utf8").match(/@AdminAuditMutation\(/g) ?? []).length, 16);
   assert.doesNotMatch(mutationSources, /if \(!this\.audit\)|@Optional\(\).*audit/);
   const controller = readFileSync("src/modules/admin/admin.controller.ts", "utf8");
   assert.doesNotMatch(controller, /@(Patch|Delete)\("audit-logs/);

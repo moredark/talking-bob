@@ -1,6 +1,7 @@
 import {
   BookOpenText,
   Bot,
+  Drama,
   LayoutDashboard,
   MessagesSquare,
   Megaphone,
@@ -14,6 +15,7 @@ export const adminNavigationItems = [
   { path: "/", label: "Дашборд", icon: LayoutDashboard },
   { path: "/users", label: "Пользователи", icon: Users },
   { path: "/prompts", label: "Промпты", icon: Bot },
+  { path: "/personalities", label: "Личности", icon: Drama },
   { path: "/topics", label: "Статистика тем", icon: BookOpenText },
   { path: "/sessions", label: "Сессии", icon: MessagesSquare },
   { path: "/broadcasts", label: "Рассылки", icon: Megaphone },

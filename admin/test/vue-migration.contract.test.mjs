@@ -31,6 +31,7 @@ test("router preserves the exact admin route set and auth guards", () => {
     "users",
     "users/:id",
     "prompts",
+    "personalities",
     "topics",
     "error-logs",
     "audit-logs",
@@ -52,6 +53,12 @@ test("router preserves the exact admin route set and auth guards", () => {
 test("admin API preserves endpoint methods and default pagination", () => {
   const source = read("src/api/admin.api.ts");
   const contracts = [
+    ["get", '"/admin/personalities"'],
+    ["post", '"/admin/personalities"'],
+    ["patch", "`/admin/personalities/${id}`"],
+    ["post", "`/admin/personalities/${id}/activate`"],
+    ["post", "`/admin/personalities/${id}/deactivate`"],
+    ["post", "`/admin/personalities/${id}/set-default`"],
     ["get", '"/admin/dashboard"'],
     ["get", '"/admin/analytics"'],
     ["get", '"/admin/users"'],
@@ -97,6 +104,59 @@ test("admin API preserves endpoint methods and default pagination", () => {
   assert.match(source, /clearOldErrorLogs:\s*async\s*\(days:\s*number\s*=\s*30\)/);
   assert.equal((source.match(/params:\s*\{\s*page,\s*limit/g) ?? []).length, 6);
   assert.match(source, /params:\s*\{\s*days\s*\}/);
+});
+
+test("personalities SPA preserves exact API, protected route, and complete management states", () => {
+  const api = read("src/api/admin.api.ts");
+  const types = read("src/types/index.ts");
+  const router = read("src/router/index.ts");
+  const navigation = read("src/components/adminNavigation.ts");
+  const page = read("src/pages/PersonalitiesPage.vue");
+
+  assert.match(router, /path:\s*"personalities"[^\n]*name:\s*"personalities"[^\n]*PersonalitiesPage\.vue/);
+  assert.doesNotMatch(router, /path:\s*"personalities"[^\n]*meta:\s*\{\s*public:\s*true/);
+  assert.match(navigation, /path:\s*"\/personalities"[^\n]*label:\s*"Личности"/);
+  assert.match(types, /export interface Personality\s*\{[\s\S]*\bselectedUsersCount:\s*number;/);
+  assert.match(types, /export interface CreatePersonalityDto\s*\{[\s\S]*\bfollowUpStylePrompt:\s*string;[\s\S]*\banalysisStylePrompt:\s*string;/);
+  assert.match(types, /export interface UpdatePersonalityDto\s*\{[\s\S]*\bfollowUpStylePrompt\?:\s*string;[\s\S]*\banalysisStylePrompt\?:\s*string;/);
+  assert.match(types, /export interface PersonalityRules\s*\{[\s\S]*\bfollowUpPrompt:\s*string;[\s\S]*\banalysisPrompt:\s*string;/);
+  assert.match(types, /export interface UpdatePersonalityRulesDto\s*\{[\s\S]*\bfollowUpPrompt:\s*string;[\s\S]*\banalysisPrompt:\s*string;/);
+
+  for (const [method, path] of [
+    ["get", '"/admin/personalities"'],
+    ["post", '"/admin/personalities"'],
+    ["patch", "`/admin/personalities/${id}`"],
+    ["post", "`/admin/personalities/${id}/activate`"],
+    ["post", "`/admin/personalities/${id}/deactivate`"],
+    ["post", "`/admin/personalities/${id}/set-default`"],
+    ["get", '"/admin/personalities/rules"'],
+    ["patch", '"/admin/personalities/rules"'],
+  ]) {
+    assert.match(api, new RegExp(`apiClient\\.${method}(?:<[^\\n]+>)?\\(\\s*${escapeRegExp(path)}`));
+  }
+
+  assert.match(page, /let requestSequence\s*=\s*0/);
+  assert.match(page, /const requestId\s*=\s*\+\+requestSequence/);
+  assert.match(page, /<Skeleton\b/);
+  assert.match(page, /<StatePanel[\s\S]*@retry="load"/);
+  assert.match(page, /<Empty\b[^>]*v-if="!loading && !personalities\.length"/);
+  assert.match(page, /adminApi\.getPersonalities\(\)/);
+  assert.match(page, /adminApi\.createPersonality\(data\)/);
+  assert.match(page, /adminApi\.updatePersonality\(editing\.value\.id, data\)/);
+  assert.match(page, /adminApi\.activatePersonality\(personality\.id\)/);
+  assert.match(page, /adminApi\.deactivatePersonality\(personality\.id\)/);
+  assert.match(page, /adminApi\.getPersonalityRules\(\)/);
+  assert.match(page, /adminApi\.updatePersonalityRules\(\{\s*followUpPrompt,\s*analysisPrompt\s*\}\)/);
+  assert.match(page, /Общие правила[\s\S]*common-follow-up-prompt[\s\S]*common-analysis-prompt/);
+  assert.match(page, /adminApi\.setDefaultPersonality\(personality\.id\)/);
+  assert.match(page, /async function refreshPersonalities\(\)[\s\S]*personalities\.value\s*=\s*await adminApi\.getPersonalities\(\)/);
+  assert.match(page, /Личность обновлена[\s\S]*refreshPersonalities\(\)[\s\S]*runAction[\s\S]*refreshPersonalities\(\)/);
+  assert.match(page, /async function refreshPersonalities\(\)[\s\S]*personalities\.value\s*=\s*await adminApi\.getPersonalities\(\)/);
+  assert.match(page, /Личность обновлена[\s\S]*refreshPersonalities\(\)[\s\S]*runAction[\s\S]*refreshPersonalities\(\)/);
+  assert.match(page, /personality\.selectedUsersCount/);
+  assert.match(page, /:disabled="pendingAction !== null \|\| personality\.isDefault"/);
+  assert.match(page, /<AlertDialog[\s\S]*назначенных пользователей будут переведены[\s\S]*runAction\(deactivateCandidate, 'deactivate'\)/);
+  assert.match(page, /<Dialog[\s\S]*follow-up-prompt[\s\S]*analysis-prompt[\s\S]*:maxlength="PROMPT_MAX_LENGTH"/);
 });
 
 test("error-log SPA contract exposes operational fields and correlation filtering", () => {

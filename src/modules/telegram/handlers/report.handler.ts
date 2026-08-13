@@ -1,11 +1,12 @@
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { Context } from "grammy";
-import { AgentTone, ILLMService, LLM_SERVICE } from "../../ai";
+import { AgentPersonalityPrompt, ILLMService, LLM_SERVICE } from "../../ai";
 import { ConversationService } from "../../conversation";
 import { PromptService } from "../../prompt";
 import { RateLimitService } from "../../rate-limit";
 import { GenerationClaim, ResponseService } from "../../response";
 import { UserService } from "../../user";
+import { PersonalityService } from "../../personality";
 import { ErrorLogService, ObservabilityContextService } from "../../error-log";
 import { ReportWorkflowService } from "../report-workflow.service";
 
@@ -24,6 +25,7 @@ export class ReportHandler {
     @Optional() private readonly errorLog?: ErrorLogService,
     @Optional() private readonly observability?: ObservabilityContextService,
     injectedWorkflow?: ReportWorkflowService,
+    @Optional() private readonly personalityService?: PersonalityService,
   ) {
     this.workflow = injectedWorkflow ?? new ReportWorkflowService(
       this.responseService,
@@ -48,6 +50,20 @@ export class ReportHandler {
     if (!userPrompt) { await ctx.reply("Нет активного разговора. Отправьте /start для начала."); return; }
     const messages = await this.conversationService.getMessages(userPrompt.id);
     const requestKey = this.requestKey(ctx);
+    let personality: AgentPersonalityPrompt | undefined;
+    try {
+      personality = this.personalityService
+        ? await this.personalityService.resolveSelectedOrDefault(user.agentTone)
+        : undefined;
+    } catch (error) {
+      this.logger.error(`Failed to resolve personality (${this.errorKind(error)})`);
+      await this.errorLog?.capture({
+        type: "system", service: "general", operation: "report.personality.resolve",
+        userId: user.id, requestId: requestKey, error, retryable: true,
+      });
+      await ctx.reply("😔 Произошла ошибка при формировании отчёта. Попробуйте ещё раз позже.");
+      return;
+    }
     const result = await this.responseService.claimGeneration({
       userId: user.id, userPromptId: userPrompt.id,
       voiceFileId: messages.find((m) => m.role === "user")?.voiceFileId ?? "",
@@ -73,17 +89,16 @@ export class ReportHandler {
       await this.workflow.deliverPersisted(ctx, result.response, requestKey); return;
     }
     const prompt = await this.promptService.getPromptById(userPrompt.promptId);
-    const tone: AgentTone = user.agentTone === "playful" ? "playful" : "friendly";
     const typing = this.startTypingIndicator(ctx);
     try {
-      await this.generateClaimedReport(ctx, userPrompt.id, prompt?.topic ?? "General", tone, result.claim);
+      await this.generateClaimedReport(ctx, userPrompt.id, prompt?.topic ?? "General", personality, result.claim);
     } finally { clearInterval(typing); }
   }
 
   async generateClaimedReport(
-    ctx: Context, userPromptId: string, topic: string, tone: AgentTone, claim: GenerationClaim,
+    ctx: Context, userPromptId: string, topic: string, personality: AgentPersonalityPrompt | undefined, claim: GenerationClaim,
   ): Promise<void> {
-    await this.workflow.generateClaimedReport(ctx, userPromptId, topic, tone, claim);
+    await this.workflow.generateClaimedReport(ctx, userPromptId, topic, personality, claim);
   }
 
   private requestKey(ctx: Context): string {
@@ -97,5 +112,9 @@ export class ReportHandler {
     const chatId = ctx.chat!.id;
     ctx.api.sendChatAction(chatId, "typing").catch(() => {});
     return setInterval(() => ctx.api.sendChatAction(chatId, "typing").catch(() => {}), 4000);
+  }
+
+  private errorKind(error: unknown): string {
+    return error instanceof Error ? error.name : "UnknownError";
   }
 }
