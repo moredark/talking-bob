@@ -1,6 +1,6 @@
 import type { MessageEntity } from "grammy/types";
 
-export const VOICE_TRANSCRIPT_HINT = "Не всё расслышал? Нажми на скрытый текст ниже.\n\n";
+export const VOICE_TRANSCRIPT_HINT = "";
 const MAX_CAPTION_LENGTH = 1024;
 
 export interface VoiceCaption {

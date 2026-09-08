@@ -31,9 +31,9 @@ test("voice caption preserves exact Unicode/HTML text, spoiler offsets and repor
   assert.equal(context.calls.text.length, 0);
   assert.equal(context.calls.voice.length, 1);
   const options = context.calls.voice[0][1];
-  assert.equal(options.caption, VOICE_TRANSCRIPT_HINT + text);
+  assert.equal(options.caption, text);
   assert.deepEqual(options.caption_entities, [{
-    type: "spoiler", offset: VOICE_TRANSCRIPT_HINT.length, length: text.length,
+    type: "spoiler", offset: 0, length: text.length,
   }]);
   assert.equal(options.parse_mode, undefined);
   assert.equal(options.reply_markup, keyboard);
