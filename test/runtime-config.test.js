@@ -24,6 +24,7 @@ test("runtime config parses required values and bounded defaults", () => {
   assert.equal(config.concurrency.aiRequestMaxPending, 8);
   assert.equal(config.voice.maxFileSizeBytes, 20 * 1024 * 1024);
   assert.equal(config.externalRequests.whisper.timeoutMs, 120_000);
+  assert.deepEqual(config.tts, { enabled:false, apiKey:"", speed:1, maxTextCharacters:5000, request:{timeoutMs:20_000,maxResponseBytes:2*1024*1024} });
 });
 
 test("runtime config parses numeric overrides without mutating input", () => {
@@ -110,4 +111,45 @@ test("runtime config rejects the retired public JWT fallback", () => {
     (error) => error instanceof RuntimeConfigError
       && error.issues.includes("JWT_SECRET must not use the retired public fallback"),
   );
+});
+
+test("runtime config parses TTS settings", () => {
+  const config = parseRuntimeConfig({...REQUIRED,TTS_ENABLED:"true",YANDEX_SPEECHKIT_API_KEY:"tts-secret",TTS_SPEED:"1.25",TTS_MAX_TEXT_CHARACTERS:"1200",TTS_REQUEST_TIMEOUT_MS:"5000",TTS_REQUEST_MAX_RESPONSE_BYTES:"4096"});
+  assert.deepEqual(config.tts,{enabled:true,apiKey:"tts-secret",speed:1.25,maxTextCharacters:1200,request:{timeoutMs:5000,maxResponseBytes:4096}});
+});
+test("runtime config validates TTS enabled key and values", () => {
+  assert.throws(()=>parseRuntimeConfig({...REQUIRED,TTS_ENABLED:"true"}),(e)=>e instanceof RuntimeConfigError&&e.issues.some((i)=>i.includes("YANDEX_SPEECHKIT_API_KEY")));
+  assert.throws(()=>parseRuntimeConfig({...REQUIRED,TTS_ENABLED:"maybe"}),(e)=>e instanceof RuntimeConfigError&&e.issues.some((i)=>i.includes("TTS_ENABLED")));
+  assert.throws(()=>parseRuntimeConfig({...REQUIRED,TTS_SPEED:"4"}),(e)=>e instanceof RuntimeConfigError&&e.issues.some((i)=>i.includes("TTS_SPEED")));
+});
+
+
+test("TTS config rejects invalid limits and header controls without leaking the API key", () => {
+  const secret = "tts-do-not-log-this";
+  const fields = {
+    TTS_SPEED: "NaN",
+    TTS_MAX_TEXT_CHARACTERS: "5001",
+    TTS_REQUEST_TIMEOUT_MS: "20001",
+    TTS_REQUEST_MAX_RESPONSE_BYTES: "2097153",
+    YANDEX_SPEECHKIT_API_KEY: secret + String.fromCharCode(13, 10) + "header",
+  };
+  assert.throws(() => parseRuntimeConfig({ ...REQUIRED, TTS_ENABLED: "true", ...fields }), (error) => {
+    assert.ok(error instanceof RuntimeConfigError);
+    for (const key of Object.keys(fields)) assert.ok(error.message.includes(key), key);
+    assert.equal(error.message.includes(secret), false);
+    return true;
+  });
+});
+
+test("boot infrastructure overrides preserve all SpeechKit settings", () => {
+  const { applyBootInfrastructure } = require("../dist/config/runtime-settings.service");
+  const config = parseRuntimeConfig({
+    ...REQUIRED, TTS_ENABLED: "true", YANDEX_SPEECHKIT_API_KEY: "private-key",
+    TTS_SPEED: "0.95", TTS_REQUEST_TIMEOUT_MS: "15000",
+  });
+  const merged = applyBootInfrastructure(config, { AI_REQUEST_CONCURRENCY: 3, LLM_REQUEST_TIMEOUT_MS: 1500 });
+  assert.deepEqual(merged.tts, config.tts);
+  assert.equal(merged.concurrency.aiRequests, 3);
+  assert.equal(merged.externalRequests.llm.timeoutMs, 1500);
+  assert.notEqual(config.externalRequests.llm.timeoutMs, 1500);
 });

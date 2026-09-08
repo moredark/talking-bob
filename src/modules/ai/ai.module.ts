@@ -1,7 +1,7 @@
 import { Module } from "@nestjs/common";
 import { RUNTIME_CONFIG } from "../../config/runtime-config.module";
 import { RuntimeConfig } from "../../config/runtime.config";
-import { WHISPER_SERVICE, LLM_SERVICE } from "./interfaces";
+import { WHISPER_SERVICE, LLM_SERVICE, TTS_SERVICE } from "./interfaces";
 import {
   AI_REQUEST_CONCURRENCY,
   AI_REQUEST_MAX_PENDING,
@@ -10,6 +10,7 @@ import {
   LLMService,
 } from "./services";
 import { AiProviderTraceWriter } from "./services/ai-provider-trace-writer.service";
+import { YandexTtsService } from "./services/yandex-tts.service";
 
 @Module({
   providers: [
@@ -34,7 +35,11 @@ import { AiProviderTraceWriter } from "./services/ai-provider-trace-writer.servi
       provide: LLM_SERVICE,
       useClass: LLMService,
     },
+    {
+      provide: TTS_SERVICE,
+      useClass: YandexTtsService,
+    },
   ],
-  exports: [WHISPER_SERVICE, LLM_SERVICE, AiRequestLimiterService],
+  exports: [WHISPER_SERVICE, LLM_SERVICE, TTS_SERVICE, AiRequestLimiterService],
 })
 export class AiModule {}

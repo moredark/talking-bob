@@ -87,7 +87,7 @@ uniquely labelled temporary resources and remove only those owned by the run.
 
 ## Runtime boundaries
 
-The bot uses the standard Telegram Bot API through grammY. Built-in questions are text-first; a prompt may reference a voice message uploaded to Telegram in advance. There is no runtime text-to-speech provider, dependency, or TTS configuration.
+The bot uses the standard Telegram Bot API through grammY. Built-in questions are text-first; a prompt may reference a voice message uploaded to Telegram in advance. Optional Yandex SpeechKit (`john`, English) generates spoken conversation follow-ups with the original text hidden under a Telegram spoiler. Russian reports remain text. See [SpeechKit setup](docs/speechkit.md) for environment variables, limits, and safe fallback behavior.
 
 ## Documentation
 

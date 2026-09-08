@@ -7,6 +7,7 @@ import {
 } from "./message-dispatcher.interface";
 import { ScheduleService } from "./schedule.service";
 import { ErrorLogService, ObservabilityContextService } from "../error-log";
+import { buildVoiceCaption } from "../telegram/voice-caption";
 
 @Injectable()
 export class DailyPromptDispatcher implements IMessageDispatcher {
@@ -58,7 +59,8 @@ export class DailyPromptDispatcher implements IMessageDispatcher {
       `🎤 Тема дня: ${claim.prompt.topic}\n\n` +
       "Ответь голосовым сообщением на английском.";
 
-    if (!claim.prompt.audioFileId) {
+    const voiceCaption = buildVoiceCaption(claim.prompt.topic);
+    if (!claim.prompt.audioFileId || !voiceCaption) {
       try {
         await this.bot.api.sendMessage(chatId, text);
         return this.completeSuccess(claim, attemptedAt);
@@ -68,11 +70,7 @@ export class DailyPromptDispatcher implements IMessageDispatcher {
     }
 
     try {
-      await this.bot.api.sendVoice(chatId, claim.prompt.audioFileId, {
-        caption:
-          `🎤 Тема дня: ${claim.prompt.topic}\n\n` +
-          "Прослушай и ответь голосовым сообщением.",
-      });
+      await this.bot.api.sendVoice(chatId, claim.prompt.audioFileId, voiceCaption);
       return this.completeSuccess(claim, attemptedAt);
     } catch (error) {
       if (!(error instanceof GrammyError)) {

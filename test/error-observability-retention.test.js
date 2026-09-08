@@ -680,3 +680,21 @@ test("DataRetentionService cron captures cleanup failure under a dedicated corre
   assert.equal(observability.current(), undefined);
   assert.equal(JSON.stringify(creates[0].data).includes(cleanupError.message), false);
 });
+
+test("TTS error dimensions remain classified without exposing request or delivery contents", async () => {
+  const { service, creates } = createErrorLogSubject();
+  for (const [name, operation] of [
+    ["TtsProviderStatusError", "synthesize"],
+    ["AmbiguousSpokenReplyDeliveryError", "voice.process"],
+  ]) {
+    const error = new Error("private transcript and API key");
+    error.name = name;
+    error.cause = { payload: "private Telegram caption" };
+    await service.capture({ type: "ai", service: "tts", operation, error });
+    const data = creates.at(-1).data;
+    assert.equal(data.operation, operation);
+    assert.equal(data.errorKind, name);
+    assert.equal(data.stack, null);
+    assert.equal(JSON.stringify(data).includes("private"), false);
+  }
+});

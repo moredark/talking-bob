@@ -102,6 +102,11 @@ their freshness; a dump left only on the DB host is not a recovery plan.
 
 ## Recreate rollout
 
+For an existing database reporting `has no actual collation version, but a
+version was recorded`, follow the [PostgreSQL collation recovery procedure](postgres-collation-recovery.md)
+before a normal rollout. Changing the image alone does not rebuild indexes
+written under the previous locale library.
+
 1. Put the service in maintenance and stop the old app/writers.
 2. Create and validate the backup above.
 3. Pull the recorded runtime and init image digests.

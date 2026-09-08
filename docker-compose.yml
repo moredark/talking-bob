@@ -6,7 +6,8 @@ x-logging: &rotated-json-logs
 
 services:
   db:
-    image: postgres:16.13-alpine3.23@sha256:4e6e670bb069649261c9c18031f0aded7bb249a5b6664ddec29c013a89310d50
+    # Keep glibc for existing data volumes; see docs/postgres-collation-recovery.md.
+    image: postgres:16.13-trixie@sha256:5d143123fdf80462d1778cd4f24b9f7ca13c87174bca19141fb194c5a1ebca59
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}

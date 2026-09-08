@@ -31,6 +31,7 @@ function createSubject({
   precheckResult = { outcome: "accepted" },
   acceptanceResult,
   assistantResult = { outcome: "inserted" },
+  spokenReply,
 } = {}) {
   const calls = {
     findUser: 0,
@@ -115,6 +116,7 @@ function createSubject({
         return { key: "friendly", followUpPrompt: "Friendly follow-up", analysisPrompt: "Friendly analysis" };
       },
     },
+    spokenReply,
   );
   handler.settings = {
     productNumber: (key) => {
@@ -351,4 +353,37 @@ test("VoiceHandler suppresses a generated follow-up when the guarded assistant i
   assert.equal(calls.llm, 1);
   assert.equal(calls.addAssistant, 1);
   assert.equal(calls.replies.length, 0);
+});
+
+
+test("VoiceHandler sends spoken reply only after assistant persistence", async () => {
+  const events = []; const spokenReply = { send: async () => events.push("send") };
+  const subject = createSubject({ spokenReply });
+  const original = subject.handler.conversationService.addAssistantMessageIfOpen;
+  subject.handler.conversationService.addAssistantMessageIfOpen = async (...args) => { events.push("persist"); return original(...args); };
+  const oldFetch = global.fetch; global.fetch = async () => new Response("audio");
+  try { await subject.handler.handle(subject.context); } finally { global.fetch = oldFetch; }
+  assert.deepEqual(events, ["persist", "send"]);
+});
+test("VoiceHandler does not send spoken reply for stale assistant insert", async () => {
+  let sends = 0; const subject = createSubject({ spokenReply:{send:async()=>{sends+=1;}}, assistantResult:{outcome:"stale"} });
+  const oldFetch=global.fetch; global.fetch=async()=>new Response("audio");
+  try { await subject.handler.handle(subject.context); } finally { global.fetch=oldFetch; }
+  assert.equal(sends,0); assert.equal(subject.calls.replies.length,0);
+});
+test("VoiceHandler suppresses generic reply after ambiguous spoken delivery", async () => {
+  const { AmbiguousSpokenReplyDeliveryError } = require("../dist/modules/telegram/spoken-reply.service");
+  const subject=createSubject({spokenReply:{send:async()=>{throw new AmbiguousSpokenReplyDeliveryError(new Error("timeout"));}}});
+  const oldFetch=global.fetch; global.fetch=async()=>new Response("audio");
+  try { await subject.handler.handle(subject.context); } finally { global.fetch=oldFetch; }
+  assert.equal(subject.calls.replies.length,0);
+});
+
+
+
+test("VoiceHandler third reply generates report and does not send spoken follow-up", async () => {
+  let sends=0; const subject=createSubject({spokenReply:{send:async()=>{sends++;}}, acceptanceResult:{outcome:"accepted",message:{id:"user-message-3"},userMessageCount:3,generationClaim:{responseId:"response-1",claimToken:"claim-1",claimExpiresAt:new Date()}}});
+  const oldFetch=global.fetch; global.fetch=async()=>new Response("audio");
+  try { await subject.handler.handle(subject.context); } finally { global.fetch=oldFetch; }
+  assert.equal(subject.calls.report,1); assert.equal(sends,0);
 });

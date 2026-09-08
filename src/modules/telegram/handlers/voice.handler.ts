@@ -15,6 +15,7 @@ import {
 import { ReportWorkflowService } from "../report-workflow.service";
 import { PersonalityService } from "../../personality";
 import { ErrorLogService, ObservabilityContextService } from "../../error-log";
+import { AmbiguousSpokenReplyDeliveryError, SpokenReplyService } from "../spoken-reply.service";
 
 type VoiceProcessingStage =
   | "personality_resolve"
@@ -43,6 +44,7 @@ export class VoiceHandler {
     @Optional() private readonly errorLog?: ErrorLogService,
     @Optional() private readonly observability?: ObservabilityContextService,
     @Optional() private readonly personalityService?: PersonalityService,
+    @Optional() private readonly spokenReply?: SpokenReplyService,
   ) {}
 
   async handle(ctx: Context): Promise<void> {
@@ -126,7 +128,11 @@ export class VoiceHandler {
       if (inserted.outcome !== "inserted") return;
       const keyboard = new InlineKeyboard().text("📊 Получить отчёт", "report");
       stage = "telegram_reply";
-      await ctx.reply(followUp, { reply_markup: keyboard });
+      if (this.spokenReply) {
+        await this.spokenReply.send(ctx, followUp, keyboard);
+      } else {
+        await ctx.reply(followUp, { reply_markup: keyboard });
+      }
     } catch (error) {
       const attribution = this.failureAttribution(stage);
       this.logger.error(
@@ -142,7 +148,9 @@ export class VoiceHandler {
         error,
         retryable: attribution.retryable,
       });
-      await ctx.reply("😔 Произошла ошибка при обработке. Попробуйте ещё раз позже.");
+      if (!(error instanceof AmbiguousSpokenReplyDeliveryError)) {
+        await ctx.reply("😔 Произошла ошибка при обработке. Попробуйте ещё раз позже.");
+      }
     } finally { clearInterval(typing); }
   }
 

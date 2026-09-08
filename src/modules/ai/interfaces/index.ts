@@ -13,3 +13,5 @@ export {
   ConversationMessage,
   LLM_SERVICE,
 } from "./llm.interface";
+
+export { ITtsService, TTS_SERVICE } from "./tts.interface";

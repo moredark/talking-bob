@@ -22,6 +22,13 @@ export interface RuntimeConfig {
     analysisMaxTokens: number;
     followUpMaxTokens: number;
   };
+  tts: {
+    enabled: boolean;
+    apiKey: string;
+    speed: number;
+    maxTextCharacters: number;
+    request: RuntimeRequestLimits;
+  };
   concurrency: {
     telegramUpdates: number;
     aiRequests: number;
@@ -162,6 +169,22 @@ export function parseRuntimeConfig(
     min: 64,
     max: 32_000,
   });
+  const ttsEnabledRaw = optional(env, "TTS_ENABLED") ?? "false";
+  if (ttsEnabledRaw !== "true" && ttsEnabledRaw !== "false") {
+    issues.push("TTS_ENABLED must be true or false");
+  }
+  const ttsEnabled = ttsEnabledRaw === "true";
+  const ttsApiKey = optional(env, "YANDEX_SPEECHKIT_API_KEY") ?? "";
+  if (ttsEnabled && !ttsApiKey) {
+    issues.push("YANDEX_SPEECHKIT_API_KEY is required when TTS_ENABLED is true");
+  }
+  if (/[\u0000-\u001f\u007f]/.test(ttsApiKey)) {
+    issues.push("YANDEX_SPEECHKIT_API_KEY must not contain control characters");
+  }
+  const ttsSpeed = Number(optional(env, "TTS_SPEED") ?? "1");
+  if (!Number.isFinite(ttsSpeed) || ttsSpeed < 0.1 || ttsSpeed > 3) {
+    issues.push("TTS_SPEED must be a number between 0.1 and 3");
+  }
   const maxDurationSeconds = number("VOICE_MAX_DURATION_SECONDS", {
     defaultValue: VOICE_MESSAGE_LIMITS.maxDurationSeconds,
     min: 1,
@@ -200,6 +223,18 @@ export function parseRuntimeConfig(
       model: llmModel,
       analysisMaxTokens,
       followUpMaxTokens,
+    },
+    tts: {
+      enabled: ttsEnabled,
+      apiKey: ttsApiKey,
+      speed: ttsSpeed,
+      maxTextCharacters: number("TTS_MAX_TEXT_CHARACTERS", {
+        defaultValue: 5000, min: 1, max: 5000,
+      }),
+      request: requestLimits("TTS_REQUEST", {
+        timeoutMs: 20_000,
+        maxResponseBytes: 2 * 1024 * 1024,
+      }),
     },
     concurrency: { telegramUpdates, aiRequests, aiRequestMaxPending },
     shutdown: { drainTimeoutMs },

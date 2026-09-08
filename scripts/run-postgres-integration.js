@@ -3,7 +3,7 @@ const { randomBytes } = require("node:crypto");
 const { spawn, spawnSync } = require("node:child_process");
 
 const POSTGRES_IMAGE =
-  "postgres:16.13-alpine3.23@sha256:4e6e670bb069649261c9c18031f0aded7bb249a5b6664ddec29c013a89310d50";
+  "postgres:16.13-trixie@sha256:5d143123fdf80462d1778cd4f24b9f7ca13c87174bca19141fb194c5a1ebca59";
 const LATEST_MIGRATION = "20260813120000_split_agent_prompt_rules";
 const ALL_MIGRATIONS = [
   "20260118172424",

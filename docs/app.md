@@ -11,10 +11,12 @@ LLM conversation follow-ups are in English.
 > is part of the verified schema/runtime baseline named above.
 
 The runtime uses Cloud.ru Whisper for speech-to-text and a Cloud.ru-compatible
-chat-completions LLM behind injected interfaces. Questions are text-first. A
-prompt may contain an existing Telegram `audioFileId`, but the backend has no
-TTS provider and no TTS environment contract; generating question audio is a
-separate future integration.
+chat-completions LLM behind injected interfaces. Initial questions are text-first
+unless a prompt contains an existing Telegram `audioFileId`. Optional Yandex
+SpeechKit synthesizes English conversation follow-ups at runtime with `john`
+(`en-US`, OGG/Opus). Successful voice messages contain the original English
+text under a Telegram spoiler. Russian reports remain text-only.
+See [SpeechKit setup](speechkit.md).
 
 ## Commands and settings
 
@@ -76,6 +78,15 @@ and generates an English follow-up. The assistant message is inserted only if
 the conversation is still open and the corresponding user message is still
 the latest accepted turn. The third accepted user turn atomically closes the
 conversation and claims automatic report generation.
+
+When `TTS_ENABLED=true`, an inserted assistant follow-up is synthesized and
+sent as a voice message with the existing **Get report** keyboard and a spoiler
+caption. The exact original text stays in conversation history. Disabled TTS,
+a synthesis failure, or a caption exceeding 1024 UTF-16 code units falls back
+to the complete readable text (split into 4096-unit messages when necessary).
+A definite voice rejection may fall back to text; an ambiguous Telegram outcome
+does not trigger another content or generic-error send. Follow-up delivery does
+not have a durable retry claim; this change does not introduce automatic retries.
 
 `/report` may close and report a conversation after its first accepted voice
 message; with no accepted user messages it is rejected. Report generation is
@@ -241,13 +252,20 @@ logs have independent retention periods. Active quota windows are not removed.
 ## Environment contract
 
 The example values live in [`.env.example`](../.env.example). Numeric values
-must parse to safe integers in the inclusive ranges below.
+must parse to safe integers in the inclusive ranges below, except `TTS_SPEED`,
+which accepts a finite decimal.
 
 | Variable | Requirement/default | Consumer and format | Secret |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | required | Prisma; `postgres:` or `postgresql:` URL | yes |
 | `TELEGRAM_BOT_TOKEN` | required | grammY bot token | yes |
 | `CLOUD_RU_API_KEY` | required | Whisper and LLM bearer credential | yes |
+| `TTS_ENABLED` | `false`; `true` or `false` | opt-in English voice replies | no |
+| `YANDEX_SPEECHKIT_API_KEY` | required when TTS is enabled | SpeechKit service-account API key | yes |
+| `TTS_SPEED` | `1`; 0.1..3 | SpeechKit speaking speed | no |
+| `TTS_MAX_TEXT_CHARACTERS` | `5000`; 1..5000 | synthesis input limit; caption may impose a lower limit | no |
+| `TTS_REQUEST_TIMEOUT_MS` | `20000`; 100..20000 | synthesis timeout, ms | no |
+| `TTS_REQUEST_MAX_RESPONSE_BYTES` | `2097152`; 1..2097152 | synthesis response limit | no |
 | `PORT` | `3000`; 1..65535 | Nest HTTP listener | no |
 | `LLM_API_URL` | `https://foundation-models.api.cloud.ru/v1/chat/completions` | LLM; HTTP(S) URL | no |
 | `LLM_MODEL` | `zai-org/GLM-4.7` | Cloud.ru model identifier | no |

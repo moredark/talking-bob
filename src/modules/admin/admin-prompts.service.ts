@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { ConflictException, Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database";
 import { CreatePromptDto, PaginatedResult, PromptItem, UpdatePromptDto } from "./admin.contracts";
@@ -46,12 +46,25 @@ export class AdminPromptsService {
     if (!await this.prisma.prompt.findUnique({ where: { id } })) return null;
     return this.audit.runSuccess({ action: "prompt.update", entityType: "prompt" }, async (tx) => {
       const before = await tx.prompt.findUniqueOrThrow({ where: { id } });
-      const prompt = await tx.prompt.update({ where: { id }, data: this.updateData(dto), include: { userPrompts: { select: { id: true } } } });
+      const data = this.updateData(dto);
+      const topicChanged = dto.topic !== undefined && dto.topic !== before.topic;
+      const invalidateAudio = topicChanged && (data.audioFileId === undefined || data.audioFileId === before.audioFileId);
+      if (invalidateAudio) data.audioFileId = null;
+      const auditedChange = invalidateAudio ? { ...dto, audioFileId: null } : dto;
+      const prompt = await tx.prompt.update({
+        where: { id, topic: before.topic, audioFileId: before.audioFileId },
+        data, include: { userPrompts: { select: { id: true } } },
+      }).catch((error: unknown) => {
+        if (error && typeof error === "object" && "code" in error && error.code === "P2025") {
+          throw new ConflictException("Question changed; reload before retrying");
+        }
+        throw error;
+      });
       return {
         result: this.mapPrompt(prompt),
         entityId: id,
-        before: this.promptSnapshot(before, dto),
-        after: this.promptSnapshot(prompt, dto),
+        before: this.promptSnapshot(before, auditedChange),
+        after: this.promptSnapshot(prompt, auditedChange),
       };
     });
   }

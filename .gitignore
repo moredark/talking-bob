@@ -35,3 +35,6 @@ prisma/*.db-journal
 
 # Test
 coverage
+
+# Private offline TTS checkpoints and cached audio
+.cache/prompt-audio/

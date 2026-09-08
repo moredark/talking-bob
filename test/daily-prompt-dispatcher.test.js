@@ -196,3 +196,28 @@ test("successful Telegram send stays pending when completion persistence throws"
   assert.equal(calls.definite.length, 0);
   assert.equal(calls.ambiguous.length, 0);
 });
+
+test("cached prompt voice keeps its exact text hidden under a UTF-16 spoiler", async () => {
+  const { calls, dispatcher, deliveryClaim } = createSubject({ audioFileId: "cached-voice" });
+  const topic = "Where would you travel? 🌍 <b>Why</b> & how?";
+  deliveryClaim.prompt.topic = topic;
+  assert.equal(await dispatcher.dispatch(deliveryClaim), "sent");
+  const [, fileId, options] = calls.sendVoice[0];
+  assert.equal(fileId, "cached-voice");
+  assert.equal(calls.sendMessage.length, 0);
+  const [entity] = options.caption_entities;
+  assert.equal(entity.type, "spoiler");
+  assert.equal(entity.length, topic.length);
+  assert.equal(options.caption.slice(entity.offset, entity.offset + entity.length), topic);
+  assert.equal(options.parse_mode, undefined);
+});
+
+test("cached question exceeding caption limit falls back to complete readable text", async () => {
+  const { calls, dispatcher, deliveryClaim } = createSubject({ audioFileId: "cached-voice" });
+  deliveryClaim.prompt.topic = "x".repeat(1025);
+  assert.equal(await dispatcher.dispatch(deliveryClaim), "sent");
+  assert.equal(calls.sendVoice.length, 0);
+  assert.equal(calls.sendMessage.length, 1);
+  assert.ok(calls.sendMessage[0][1].includes(deliveryClaim.prompt.topic));
+  assert.equal(calls.success.length, 1);
+});

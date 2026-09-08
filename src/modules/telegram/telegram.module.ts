@@ -17,6 +17,7 @@ import { ReportWorkflowService } from "./report-workflow.service";
 import { BroadcastModule } from "../broadcast";
 import { PersonalityModule } from "../personality";
 import { StreakModule } from "../streak";
+import { SpokenReplyService } from "./spoken-reply.service";
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { StreakModule } from "../streak";
     StartHandler,
     VoiceHandler,
     ReportHandler,
+    SpokenReplyService,
     ReportWorkflowService,
     SettingsHandler,
   ],

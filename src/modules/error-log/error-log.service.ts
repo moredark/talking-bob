@@ -47,6 +47,8 @@ const SAFE_ERROR_KINDS = new Set([
   "TelegramRuntimeClosedError",
   "WhisperProviderStatusError",
   "LlmProviderStatusError",
+  "TtsProviderStatusError",
+  "AmbiguousSpokenReplyDeliveryError",
   "GrammyError",
   "HttpError",
 ]);
@@ -78,6 +80,7 @@ const SAFE_OPERATIONS = new Set([
   "report.send_chunk",
   "report.persist_success",
   "transcribe",
+  "synthesize",
   "analyze_speech",
   "generate_follow_up",
   "claim.dispatch",

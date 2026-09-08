@@ -29,6 +29,7 @@
     "docker:logs": "npm run docker -- logs --follow --tail=200",
     "docker:ps": "npm run docker -- ps",
     "docker:init": "npm run docker -- run --rm --build init node dist-seed/seed.js",
+    "prompts:audio": "npm run build && node dist/scripts/prepare-prompt-audio.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",

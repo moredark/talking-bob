@@ -1,6 +1,5 @@
 export { AiModule } from "./ai.module";
 
-
 export {
   IWhisperService,
   TranscriptionResult,
@@ -12,8 +11,11 @@ export {
   SpeechAnalysisResult,
   ConversationMessage,
   LLM_SERVICE,
+  ITtsService,
+  TTS_SERVICE,
 } from "./interfaces";
 
+export { YandexTtsService } from "./services/yandex-tts.service";
 export {
   WhisperService,
   LLMService,
