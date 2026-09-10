@@ -27,6 +27,14 @@ export class ResponseGenerationOperations {
         where: { userPromptId: data.userPromptId, role: "user" },
       });
       if (userMessageCount === 0) return { outcome: "no_messages" };
+      if (prompt.conversationStatus === "open" && data.expectedLastMessageId !== undefined) {
+        const latest = await tx.conversationMessage.findFirst({
+          where: { userPromptId: data.userPromptId },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          select: { id: true },
+        });
+        if (latest?.id !== data.expectedLastMessageId) return { outcome: "stale" };
+      }
       const now = new Date();
       let streak: StreakQualification | null = null;
       if (prompt.conversationStatus === "open") {

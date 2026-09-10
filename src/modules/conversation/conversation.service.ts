@@ -17,6 +17,7 @@ export interface AcceptVoiceData {
   voiceFileId: string;
   telegramUpdateId: bigint;
   generationRequestKey: string;
+  readiness?: { ready: boolean; expectedLastMessageId: string | null };
 }
 
 export type VoicePrecheckResult =
@@ -33,6 +34,7 @@ export interface ConversationGenerationClaim {
 }
 
 export type AcceptVoiceResult =
+  | { outcome: "stale" }
   | { outcome: "duplicate"; message: PrismaConversationMessage }
   | { outcome: "closed" }
   | {
@@ -73,7 +75,7 @@ export class ConversationService {
       : { outcome: "closed" };
   }
 
-  /** Atomically accepts a voice turn and claims generation on turn three. */
+  /** Atomically accepts a turn; third and later turns close only when ready. */
   async acceptVoiceAndMaybeClaimGeneration(
     data: AcceptVoiceData,
   ): Promise<AcceptVoiceResult> {
@@ -85,6 +87,14 @@ export class ConversationService {
       });
       if (duplicate) return { outcome: "duplicate", message: duplicate };
       if (prompt.conversationStatus !== "open") return { outcome: "closed" };
+      if (data.readiness) {
+        const latest = await tx.conversationMessage.findFirst({
+          where: { userPromptId: data.userPromptId },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          select: { id: true },
+        });
+        if ((latest?.id ?? null) !== data.readiness.expectedLastMessageId) return { outcome: "stale" };
+      }
 
       const message = await tx.conversationMessage.create({
         data: {
@@ -132,7 +142,7 @@ export class ConversationService {
       });
       let generationClaim: ConversationGenerationClaim | null = null;
 
-      if (userMessageCount >= 3) {
+      if (userMessageCount >= 3 && data.readiness?.ready !== false) {
         const now = new Date();
         const claimToken = randomUUID();
         const claimExpiresAt = new Date(now.getTime() + GENERATION_LEASE_MS);
@@ -183,20 +193,20 @@ export class ConversationService {
   async addAssistantMessageIfOpen(
     userPromptId: string,
     content: string,
-    expectedUserMessageId?: string,
+    expectedLastMessageId?: string,
   ): Promise<GuardedAssistantResult> {
     return this.prisma.$transaction(async (tx) => {
       const prompt = await this.lockUserPrompt(tx, userPromptId);
       if (!prompt || prompt.conversationStatus !== "open") {
         return { outcome: "closed" };
       }
-      if (expectedUserMessageId) {
-        const latestUser = await tx.conversationMessage.findFirst({
-          where: { userPromptId, role: "user" },
+      if (expectedLastMessageId) {
+        const latest = await tx.conversationMessage.findFirst({
+          where: { userPromptId },
           orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           select: { id: true },
         });
-        if (latestUser?.id !== expectedUserMessageId) return { outcome: "stale" };
+        if (latest?.id !== expectedLastMessageId) return { outcome: "stale" };
       }
       const message = await tx.conversationMessage.create({
         data: { userPromptId, role: "assistant", content },

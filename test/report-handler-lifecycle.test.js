@@ -59,10 +59,10 @@ function context(messageId = 10, replyImpl) {
   };
 }
 
-function createSubject({ claimResult, response = {}, llm = {}, messages, observability } = {}) {
+function createSubject({ claimResult, response = {}, llm = {}, messages, observability, conversationStatus } = {}) {
   const calls = {
     claim: [], completeGeneration: [], createDelivery: [], begin: [],
-    completeChunk: [], failGeneration: [], definite: [], ambiguous: [], llm: [], personality: [],
+    completeChunk: [], failGeneration: [], definite: [], ambiguous: [], llm: [], personality: [], questions: [], readiness: [],
   };
   const responseService = {
     getResponseById: async () => response.currentResponse ?? null,
@@ -115,17 +115,22 @@ function createSubject({ claimResult, response = {}, llm = {}, messages, observa
   const handler = new ReportHandler(
     { findByTelegramId: async () => ({ id: "user-1", agentTone: "friendly" }) },
     {
-      getLatestUserPrompt: async () => ({ id: "user-prompt-1", promptId: "prompt-1" }),
+      getLatestUserPrompt: async () => ({ id: "user-prompt-1", promptId: "prompt-1", conversationStatus }),
       getPromptById: async () => ({ id: "prompt-1", topic: "Travel" }),
     },
     responseService,
     {
+      addAssistantMessageIfOpen: async (...args) => { calls.questions.push(args); return { outcome: "inserted" }; },
       getMessages: async () => messages ?? [
         { role: "user", content: "I visited Rome", voiceFileId: "voice-1" },
       ],
     },
     { consumeLimit: async () => ({ allowed: true, requestId: "request-1" }) },
     {
+      assessConversation: async (...args) => {
+        calls.readiness.push(args);
+        return llm.assessConversation(...args);
+      },
       analyzeSpeech: async (...args) => {
         calls.llm.push(args);
         return llm.analyzeSpeech ? llm.analyzeSpeech(...args) : feedback;
@@ -424,4 +429,74 @@ test("ReportHandler can resend generated output under a new request after defini
   assert.equal(calls.completeChunk.length, 1);
   assert.equal(second.replies.length, 1);
   assert.match(second.replies[0][0], /Saved transcript/);
+});
+
+
+test("manual report with insufficient speech asks for detail without closing or claiming", async () => {
+  const { handler, calls } = createSubject({
+    conversationStatus: "open",
+    messages: [{ id: "u1", role: "user", content: "Yes", voiceFileId: "voice-1" }],
+    llm: { assessConversation: async () => ({ ready: false, lastQuestionAnswered: true, question: "Why do you like it?" }) },
+  });
+  const { ctx, replies } = context();
+  await handler.handle(ctx);
+  assert.equal(calls.claim.length, 0);
+  assert.equal(calls.llm.length, 0);
+  assert.deepEqual(calls.questions, [["user-prompt-1", "Why do you like it?", "u1"]]);
+  assert.deepEqual(replies, [["Why do you like it?"]]);
+});
+
+test("manual readiness failure preserves open conversation and offers retry", async () => {
+  const { handler, calls } = createSubject({
+    conversationStatus: "open",
+    llm: { assessConversation: async () => { throw new Error("timeout"); } },
+  });
+  const { ctx, replies } = context();
+  await handler.handle(ctx);
+  assert.equal(calls.claim.length, 0);
+  assert.equal(calls.questions.length, 0);
+  assert.equal(replies.length, 1);
+  assert.match(replies[0][0], /ответы сохранены.*\/report/);
+});
+
+test("seamless analysis retry emits only the final report and no failure notification", async (t) => {
+  const { LLMService } = require("../dist/modules/ai/services/llm.service");
+  const { AiRequestLimiterService } = require("../dist/modules/ai/services/ai-request-limiter.service");
+  const { installRuntimeSettings } = require("./support/runtime-settings-test-harness");
+  installRuntimeSettings(LLMService);
+  const llm = new LLMService({
+    cloudRuApiKey: "test", llm: { apiUrl: "https://provider.invalid", model: "test", analysisMaxTokens: 256, followUpMaxTokens: 128 },
+    externalRequests: { llm: { timeoutMs: 100, maxResponseBytes: 4096 } },
+  }, new AiRequestLimiterService(1));
+  const { ctx, replies } = context();
+  let attempts = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    attempts += 1;
+    if (attempts === 1) return new Response("busy", { status: 503 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(feedback) } }] }));
+  });
+  llm.sleep = async () => assert.equal(replies.length, 0);
+  const response = { activeChunks: [] };
+  const { handler, calls } = createSubject({ response, llm });
+  response.completeGeneration = async (data) => {
+    response.activeChunks = data.chunks;
+    return { outcome: "claimed", claim: deliveryClaim(data.chunks) };
+  };
+  await handler.handle(ctx);
+  assert.equal(attempts, 2);
+  assert.equal(calls.failGeneration.length, 0);
+  assert.equal(calls.completeGeneration.length, 1);
+  assert.equal(replies.length, 1);
+  assert.match(replies[0][0], /Good answer/);
+});
+
+test("exhausted analysis never persists or delivers a fallback report", async () => {
+  const { handler, calls } = createSubject({ llm: { analyzeSpeech: async () => { throw new Error("timeout"); } } });
+  const { ctx, replies } = context();
+  await handler.handle(ctx);
+  assert.equal(calls.failGeneration.length, 1);
+  assert.equal(calls.completeGeneration.length, 0);
+  assert.equal(calls.begin.length, 0);
+  assert.equal(replies.length, 1);
+  assert.match(replies[0][0], /ответы сохранены.*\/report/);
 });

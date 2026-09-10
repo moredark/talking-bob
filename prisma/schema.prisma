@@ -142,6 +142,7 @@ model AgentPromptRules {
   id             String   @id @default("default") @db.VarChar(16)
   followUpPrompt String
   analysisPrompt String
+  readinessPrompt String
   createdAt      DateTime @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime @updatedAt @db.Timestamptz(3)
 

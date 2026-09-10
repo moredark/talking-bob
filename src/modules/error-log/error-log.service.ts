@@ -81,7 +81,7 @@ const SAFE_OPERATIONS = new Set([
   "report.persist_success",
   "transcribe",
   "synthesize",
-  "analyze_speech",
+  "analyze_speech", "assess_conversation", "report.readiness",
   "generate_follow_up",
   "claim.dispatch",
   "tick",

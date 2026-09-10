@@ -11,6 +11,7 @@ export {
   FeedbackResult,
   SpeechAnalysisResult,
   ConversationMessage,
+  ConversationReadiness,
   LLM_SERVICE,
 } from "./llm.interface";
 

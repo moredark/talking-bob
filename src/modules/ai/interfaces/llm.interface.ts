@@ -19,7 +19,21 @@ export interface ConversationMessage {
   content: string;
 }
 
+export interface ConversationReadiness {
+  ready: boolean;
+  lastQuestionAnswered: boolean;
+  question: string;
+}
+
 export interface ILLMService {
+  assessConversation(
+    history: ConversationMessage[],
+    initialQuestion: string,
+    topic: string,
+    trace: AiProviderTraceContext | undefined,
+    personality: AgentPersonalityPrompt,
+  ): Promise<ConversationReadiness>;
+
   analyzeSpeech(
     transcript: string,
     topic: string,

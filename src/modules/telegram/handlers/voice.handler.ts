@@ -85,6 +85,7 @@ export class VoiceHandler {
     const typing = this.startTypingIndicator(ctx);
     const startedAt = Date.now();
     let stage: VoiceProcessingStage = "personality_resolve";
+    let savedForReadinessRetry = false;
 
     try {
       const personality = this.personalityService
@@ -94,14 +95,43 @@ export class VoiceHandler {
       const audio = await this.downloadVoiceFile(ctx, voice.file_id, maxFileSizeBytes);
       stage = "whisper_transcribe";
       const { text: transcript } = await this.whisperService.transcribe(audio, "en");
+      stage = "conversation_history";
+      const previousMessages = await this.conversationService.getMessages(userPrompt.id);
+      const needsReadiness = previousMessages.filter((message) => message.role === "user").length >= 2;
+      stage = "llm_follow_up";
+      let readinessError: unknown;
+      const readiness = needsReadiness ? await this.llmService.assessConversation(
+        [...previousMessages.map((message) => ({
+          role: message.role as "user" | "assistant", content: message.content,
+        })), { role: "user", content: transcript }],
+        prompt?.textContent ?? "", topic, {
+          userId: user.id, userPromptId: userPrompt.id, requestId: this.requestKey(ctx),
+          correlationId: this.observability?.current()?.correlationId,
+        }, personality!,
+      ).catch((error: unknown) => {
+        readinessError = error;
+        return { ready: false, lastQuestionAnswered: false, question: "" };
+      }) : undefined;
       stage = "conversation_accept";
       const accepted = await this.conversationService.acceptVoiceAndMaybeClaimGeneration({
         userId: user.id, userPromptId: userPrompt.id, content: transcript,
         voiceFileId: voice.file_id, telegramUpdateId: updateId,
         generationRequestKey: this.requestKey(ctx),
+        readiness: {
+          ready: readiness?.ready ?? false,
+          expectedLastMessageId: previousMessages[previousMessages.length - 1]?.id ?? null,
+        },
       });
       if (accepted.outcome === "duplicate") return;
+      if (accepted.outcome === "stale") {
+        await ctx.reply("Диалог изменился во время обработки. Пожалуйста, отправьте ответ ещё раз."); return;
+      }
       if (accepted.outcome === "closed") { await this.replyConversationClosed(ctx); return; }
+      if (readinessError) {
+        savedForReadinessRetry = true;
+        stage = "llm_follow_up";
+        throw readinessError;
+      }
       if (accepted.generationClaim) {
         stage = "report_generate";
         await this.reportWorkflow.generateClaimedReport(
@@ -109,15 +139,15 @@ export class VoiceHandler {
         );
         return;
       }
-      if (accepted.userMessageCount >= 3) return;
 
       stage = "conversation_history";
       const messages = await this.conversationService.getMessages(userPrompt.id);
       const history: ConversationMessage[] = messages.map((message) => ({
         role: message.role as "user" | "assistant", content: message.content,
       }));
+      if (prompt?.textContent) history.unshift({ role: "assistant", content: prompt.textContent });
       stage = "llm_follow_up";
-      const followUp = await this.llmService.generateFollowUp(history, topic, personality, {
+      const followUp = readiness && !readiness.ready ? readiness.question : await this.llmService.generateFollowUp(history, topic, personality, {
         userId: user.id, userPromptId: userPrompt.id, requestId: this.requestKey(ctx),
         correlationId: this.observability?.current()?.correlationId,
       });
@@ -149,7 +179,9 @@ export class VoiceHandler {
         retryable: attribution.retryable,
       });
       if (!(error instanceof AmbiguousSpokenReplyDeliveryError)) {
-        await ctx.reply("😔 Произошла ошибка при обработке. Попробуйте ещё раз позже.");
+        await ctx.reply(savedForReadinessRetry
+          ? "😔 Не удалось подготовить отчёт. Ваш ответ сохранён. Отправьте /report, чтобы повторить попытку."
+          : "😔 Произошла ошибка при обработке. Попробуйте ещё раз позже.");
       }
     } finally { clearInterval(typing); }
   }

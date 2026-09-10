@@ -175,7 +175,7 @@ export class AdminAuditService {
       if (typeof source.isActive === "boolean") result.isActive = source.isActive;
       if (typeof source.isDefault === "boolean") result.isDefault = source.isDefault;
       if (this.nonNegativeInt(source.sortOrder) !== null) result.sortOrder = source.sortOrder;
-      if (Array.isArray(source.changedFields) && source.changedFields.length <= 8 && source.changedFields.every((field) => typeof field === "string" && ["name","description","followUpStylePrompt","analysisStylePrompt","followUpPrompt","analysisPrompt","sortOrder","isActive","isDefault","key"].includes(field))) result.changedFields = source.changedFields;
+      if (Array.isArray(source.changedFields) && source.changedFields.length <= 8 && source.changedFields.every((field) => typeof field === "string" && ["name","description","followUpStylePrompt","analysisStylePrompt","followUpPrompt","analysisPrompt","readinessPrompt","sortOrder","isActive","isDefault","key"].includes(field))) result.changedFields = source.changedFields;
       const reassigned = this.nonNegativeInt(source.reassignedUserCount); if (reassigned !== null) result.reassignedUserCount = reassigned;
     } else if (action.startsWith("prompt.")) {
       if (typeof source.difficulty === "string" && ["easy", "medium", "hard"].includes(source.difficulty)) result.difficulty = source.difficulty;

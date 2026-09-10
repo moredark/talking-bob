@@ -895,3 +895,60 @@ test("definite and ambiguous delivery failures diverge, while a new key permits 
   assert.notEqual(resend.claim.requestId, uncertain.claim.requestId);
   assert.equal(fake.state.reportDeliveryRequests.length, 3);
 });
+
+
+test("insufficient third voice remains open and a sufficient fourth voice closes exactly once", async () => {
+  const fake = createFakePrisma({ userPrompts: [prompt()] });
+  let qualifications = 0;
+  const service = new ConversationService(fake, createStreakStub({ qualifyConversation: async () => {
+    qualifications += 1;
+    return { currentStreak: 1, longestStreak: 1, isNewRecord: true };
+  } }));
+  await service.acceptVoiceAndMaybeClaimGeneration(voiceData(1));
+  const second = await service.acceptVoiceAndMaybeClaimGeneration(voiceData(2));
+  const third = await service.acceptVoiceAndMaybeClaimGeneration(voiceData(3, {
+    readiness: { ready: false, expectedLastMessageId: second.message.id },
+  }));
+  assert.equal(third.outcome, "accepted");
+  assert.equal(third.generationClaim, null);
+  assert.equal(fake.state.userPrompts[0].conversationStatus, "open");
+  assert.equal(fake.state.userResponses.length, 0);
+  assert.equal(qualifications, 0);
+  const fourth = await service.acceptVoiceAndMaybeClaimGeneration(voiceData(4, {
+    readiness: { ready: true, expectedLastMessageId: third.message.id },
+  }));
+  assert.ok(fourth.generationClaim);
+  assert.equal(fake.state.userPrompts[0].conversationStatus, "closed");
+  assert.equal(qualifications, 1);
+  const duplicate = await service.acceptVoiceAndMaybeClaimGeneration(voiceData(4));
+  assert.equal(duplicate.outcome, "duplicate");
+  assert.equal(qualifications, 1);
+});
+
+test("stale readiness cannot accept a voice or close a manually reported conversation", async () => {
+  const fake = createFakePrisma({ userPrompts: [prompt()], conversationMessages: [message()] });
+  const streak = createStreakStub({ qualifyConversation: async () => assert.fail("must stay open") });
+  const conversation = new ConversationService(fake, streak);
+  assert.deepEqual(await conversation.acceptVoiceAndMaybeClaimGeneration(voiceData(2, {
+    readiness: { ready: true, expectedLastMessageId: "outdated" },
+  })), { outcome: "stale" });
+  assert.equal(fake.state.conversationMessages.length, 1);
+  const responses = new ResponseService(fake, streak);
+  assert.deepEqual(await responses.claimGeneration({
+    userId: "user-1", userPromptId: "prompt-1", voiceFileId: "voice-1",
+    generationRequestKey: "manual-new", expectedLastMessageId: "outdated",
+  }), { outcome: "stale" });
+  assert.equal(fake.state.userResponses.length, 0);
+  assert.equal(fake.state.userPrompts[0].conversationStatus, "open");
+});
+
+
+test("a second follow-up from the same snapshot is fenced by the latest assistant message", async () => {
+  const fake = createFakePrisma({ userPrompts: [prompt()], conversationMessages: [message()] });
+  const service = new ConversationService(fake, createStreakStub());
+  const first = await service.addAssistantMessageIfOpen("prompt-1", "Could you give an example?", "seed-message-1");
+  const repeated = await service.addAssistantMessageIfOpen("prompt-1", "Could you give an example?", "seed-message-1");
+  assert.equal(first.outcome, "inserted");
+  assert.equal(repeated.outcome, "stale");
+  assert.equal(fake.state.conversationMessages.length, 2);
+});

@@ -4,7 +4,7 @@ const { spawn, spawnSync } = require("node:child_process");
 
 const POSTGRES_IMAGE =
   "postgres:16.13-trixie@sha256:5d143123fdf80462d1778cd4f24b9f7ca13c87174bca19141fb194c5a1ebca59";
-const LATEST_MIGRATION = "20260813120000_split_agent_prompt_rules";
+const LATEST_MIGRATION = "20260910120000_add_readiness_prompt";
 const ALL_MIGRATIONS = [
   "20260118172424",
   "20260124153443_add_conversation_messages",
@@ -27,6 +27,7 @@ const ALL_MIGRATIONS = [
   "20260811120000_add_streaks",
   "20260812120000_agent_personalities",
   "20260813120000_split_agent_prompt_rules",
+  "20260910120000_add_readiness_prompt",
 ];
 const PRE_LIFECYCLE_MIGRATIONS = [
   "20260118172424",

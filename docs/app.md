@@ -76,8 +76,14 @@ is ignored rather than processed twice.
 For accepted user turns one and two, the LLM receives the persisted history
 and generates an English follow-up. The assistant message is inserted only if
 the conversation is still open and the corresponding user message is still
-the latest accepted turn. The third accepted user turn atomically closes the
-conversation and claims automatic report generation.
+the latest conversation message. Before the third and every later user turn can
+close the conversation, the LLM checks whether the speech contains enough
+meaningful English for specific feedback. Insufficient speech keeps the dialog
+open and receives one additional question; if the latest question was unanswered,
+its exact text is repeated (or the original prompt when no follow-up exists).
+Readiness is checked against the conversation snapshot under the prompt lock,
+so a stale decision cannot accept a new turn or close the conversation.
+A sufficient third or later turn atomically closes and claims generation.
 
 When `TTS_ENABLED=true`, an inserted assistant follow-up is synthesized and
 sent as a voice message with the existing **Get report** keyboard and a spoiler
@@ -89,12 +95,25 @@ does not trigger another content or generic-error send. Follow-up delivery does
 not have a durable retry claim; this change does not introduce automatic retries.
 
 `/report` may close and report a conversation after its first accepted voice
-message; with no accepted user messages it is rejected. Report generation is
+message if the same readiness check passes; otherwise it asks for more detail
+or repeats the unanswered question without closing the conversation. With no
+accepted user messages it is rejected. Report generation is
 claimed in the database. A generated report is persisted and never regenerated
 on later `/report` commands: later commands create an idempotent delivery
 request and resend the saved result. A failed generation can be reclaimed only
 by a new request key. Expired leases are reclaimable, while concurrent active
 work returns a busy response.
+
+AI analysis and readiness requests retry transient timeouts, network failures,
+HTTP 429 and 5xx, and unusable model output within a maximum of three provider
+attempts per operation, waiting 1 then 2 seconds outside the concurrency limiter.
+Retries are invisible to the user: the typing indicator continues and no
+intermediate error or extra report is sent. Cancellation, shutdown, overload,
+and permanent provider errors are not retried. Exhaustion reports a failure
+with `/report` retry guidance; it never saves a fallback as a completed report.
+Previously saved reports, including legacy fallbacks, remain resendable.
+
+The readiness system prompt is stored as `agent_prompt_rules.readinessPrompt` beside the shared follow-up and analysis prompts. It is loaded in the same personality snapshot and can be edited under **Common rules** in the admin UI; the application code only builds the conversation evidence payload and validates the configured JSON response.
 
 Reports are formatted as literal plain text and split into Telegram-safe
 chunks of at most 4096 UTF-16 code units. Only the final chunk carries the
@@ -106,7 +125,7 @@ request failed; an ambiguous delivery remains pending and requires a new
 
 A local calendar day qualifies when a conversation is successfully closed,
 not when report generation or report delivery later succeeds. Both closing
-paths use the same rule: the third accepted voice turn and a valid manual
+paths use the same readiness rule: a sufficient third or later voice turn and a valid manual
 `/report` after at least one accepted voice turn. Qualification belongs to the
 same database transaction that closes the `UserPrompt` and creates or claims
 its `UserResponse` generation owner.

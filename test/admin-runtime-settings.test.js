@@ -224,9 +224,10 @@ test("LLM snapshots analysis tokens once across retry and reads follow-up tokens
     },
   };
   service.requestTracedCompletion = async (payload) => { payloads.push(payload); return { content: null }; };
-  await service.analyzeSpeech("hello", "travel");
+  service.sleep = async () => {};
+  await assert.rejects(service.analyzeSpeech("hello", "travel"), /empty/);
   assert.equal(analysisReads, 1);
-  assert.deepEqual(payloads.map((payload) => payload.max_tokens), [3000, 3500]);
+  assert.deepEqual(payloads.map((payload) => payload.max_tokens), [3000, 3500, 3500]);
   payloads.length = 0;
   await service.generateFollowUp([], "travel");
   assert.equal(payloads[0].max_tokens, 1400);

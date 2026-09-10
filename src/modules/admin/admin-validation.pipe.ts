@@ -311,10 +311,11 @@ export class AdminUpdatePersonalityPipe implements PipeTransform<unknown, import
 export class AdminUpdateAgentPromptRulesPipe implements PipeTransform<unknown, import("./admin.contracts").UpdateAgentPromptRulesDto> {
   transform(value: unknown): import("./admin.contracts").UpdateAgentPromptRulesDto {
     const body = objectBody(value);
-    rejectUnknown(body, new Set(["followUpPrompt", "analysisPrompt"]));
+    rejectUnknown(body, new Set(["followUpPrompt", "analysisPrompt", "readinessPrompt"]));
     const followUpPrompt = personalityText(body, "followUpPrompt", 1, 8000, true);
     const analysisPrompt = personalityText(body, "analysisPrompt", 1, 8000, true);
+    const readinessPrompt = personalityText(body, "readinessPrompt", 1, 8000, true);
     if (followUpPrompt === undefined || analysisPrompt === undefined) invalid("followUpPrompt and analysisPrompt are required");
-    return { followUpPrompt, analysisPrompt };
+    return { followUpPrompt, analysisPrompt, ...(readinessPrompt !== undefined ? { readinessPrompt } : {}) };
   }
 }

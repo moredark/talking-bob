@@ -5,6 +5,7 @@ const { PrismaClient, Prisma } = require("@prisma/client");
 const { UserService } = require("../dist/modules/user/user.service");
 const { RateLimitService } = require("../dist/modules/rate-limit/rate-limit.service");
 const { ScheduleService } = require("../dist/modules/schedule/schedule.service");
+const { ConversationService } = require("../dist/modules/conversation/conversation.service");
 const { ResponseService } = require("../dist/modules/response/response.service");
 const { StreakService } = require("../dist/modules/streak/streak.service");
 const { AdminAuditContextService } = require("../dist/modules/admin/admin-audit-context.service");
@@ -490,6 +491,42 @@ test("critical PostgreSQL invariants", async (t) => {
     assert.ok(manualClaim);
     assert.ok(scheduledClaim);
     assert.notEqual(manualClaim.prompt.id, scheduledClaim.prompt.id);
+  });
+
+  await t.test("insufficient voice turns remain open and concurrent follow-ups are fenced", async () => {
+    const user = await createUser();
+    const prompt = await createPrompt("readiness-invariants");
+    const userPrompt = await createSentUserPrompt(user.id, prompt.id);
+    const service = new ConversationService(prisma, new StreakService(prisma));
+    const voice = (index, readiness) => ({
+      userId: user.id, userPromptId: userPrompt.id, content: `Answer ${index}`,
+      voiceFileId: `voice-${index}`, telegramUpdateId: nextTelegramId(),
+      generationRequestKey: `readiness-${index}`, readiness,
+    });
+    await service.acceptVoiceAndMaybeClaimGeneration(voice(1));
+    const second = await service.acceptVoiceAndMaybeClaimGeneration(voice(2));
+    const third = await service.acceptVoiceAndMaybeClaimGeneration(voice(3, {
+      ready: false, expectedLastMessageId: second.message.id,
+    }));
+    assert.equal(third.generationClaim, null);
+    assert.equal(await prisma.userResponse.count({ where: { userPromptId: userPrompt.id } }), 0);
+    assert.equal(await prisma.streakDay.count({ where: { userId: user.id } }), 0);
+    const questions = await Promise.all([
+      service.addAssistantMessageIfOpen(userPrompt.id, "Could you give an example?", third.message.id),
+      service.addAssistantMessageIfOpen(userPrompt.id, "Could you give an example?", third.message.id),
+    ]);
+    assert.deepEqual(questions.map(({ outcome }) => outcome).sort(), ["inserted", "stale"]);
+    const question = questions.find(({ outcome }) => outcome === "inserted").message;
+    const stale = await service.acceptVoiceAndMaybeClaimGeneration(voice(4, {
+      ready: true, expectedLastMessageId: third.message.id,
+    }));
+    assert.equal(stale.outcome, "stale");
+    const fourth = await service.acceptVoiceAndMaybeClaimGeneration(voice(4, {
+      ready: true, expectedLastMessageId: question.id,
+    }));
+    assert.ok(fourth.generationClaim);
+    assert.equal(await prisma.streakDay.count({ where: { userId: user.id } }), 1);
+    assert.equal(await prisma.userResponse.count({ where: { userPromptId: userPrompt.id } }), 1);
   });
 
   await t.test("report ownership, fencing, and uniqueness are enforced", async () => {

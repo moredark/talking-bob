@@ -66,7 +66,7 @@ export class ReportWorkflowService {
         error,
         retryable: true,
       });
-      await ctx.reply("😔 Произошла ошибка при формировании отчёта. Попробуйте позже.");
+      await ctx.reply("😔 Не удалось сформировать отчёт. Ваши ответы сохранены. Отправьте /report, чтобы повторить анализ.");
       return;
     }
     if (deliveryClaim) await this.deliver(ctx, deliveryClaim);

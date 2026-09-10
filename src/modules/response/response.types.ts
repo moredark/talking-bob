@@ -17,6 +17,7 @@ export interface UpdateResponseData {
 
 export interface ClaimGenerationData extends CreateResponseData {
   generationRequestKey: string;
+  expectedLastMessageId?: string;
 }
 
 export interface GenerationClaim {
@@ -28,6 +29,7 @@ export interface GenerationClaim {
 }
 
 export type ClaimGenerationResult =
+  | { outcome: "stale" }
   | { outcome: "claimed"; claim: GenerationClaim }
   | { outcome: "generated"; response: UserResponse }
   | { outcome: "busy"; response: UserResponse }

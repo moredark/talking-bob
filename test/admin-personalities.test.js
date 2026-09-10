@@ -100,7 +100,20 @@ test("personality DTO validation is strict, normalized, bounded, and allows mult
   }
   const rules = new AdminUpdateAgentPromptRulesPipe();
   assert.deepEqual(rules.transform({ followUpPrompt: "  Shared follow-up\nRules  ", analysisPrompt: "  Shared analysis\nRules  " }), { followUpPrompt: "Shared follow-up\nRules", analysisPrompt: "Shared analysis\nRules" });
-  for (const body of [{}, { followUpPrompt: "F" }, { analysisPrompt: "A" }, { followUpPrompt: "F", analysisPrompt: "A", unknown: true }]) rejects422(() => rules.transform(body));
+  assert.deepEqual(rules.transform({ followUpPrompt: "F", analysisPrompt: "A", readinessPrompt: " R " }), { followUpPrompt: "F", analysisPrompt: "A", readinessPrompt: "R" });
+  for (const body of [{}, { followUpPrompt: "F" }, { analysisPrompt: "A" }, { readinessPrompt: "R" }, { followUpPrompt: "F", analysisPrompt: "A", readinessPrompt: "R", unknown: true }]) rejects422(() => rules.transform(body));
+});
+
+test("shared prompt rules return readiness and old two-field updates preserve it", async () => {
+  const before = { id: "default", followUpPrompt: "F", analysisPrompt: "A", readinessPrompt: "R", createdAt: NOW, updatedAt: NOW };
+  const tx = { agentPromptRules: {
+    findUnique: async () => before,
+    update: async ({ data }) => ({ ...before, ...data }),
+  } };
+  const service = new AdminPersonalitiesService({ agentPromptRules: { findUnique: async () => before } }, directAudit(tx));
+  assert.deepEqual(await service.getRules(), before);
+  assert.equal((await service.updateRules({ followUpPrompt: "F2", analysisPrompt: "A2" })).readinessPrompt, "R");
+  assert.equal((await service.updateRules({ followUpPrompt: "F3", analysisPrompt: "A3", readinessPrompt: "R3" })).readinessPrompt, "R3");
 });
 
 test("list projects selectedUsersCount and preserves stable database ordering", async () => {

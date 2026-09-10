@@ -82,14 +82,20 @@ conversation state. Только затем он занимает rolling quota,
 - подавляет duplicate update по `telegramUpdateId`;
 - добавляет user message;
 - для первых двух turns оставляет conversation открытым;
-- на третьем turn закрывает conversation и, если owner ещё отсутствует, создаёт
+- на третьем и последующих turns при положительной проверке достаточности речи закрывает conversation и, если owner ещё отсутствует, создаёт
   `UserResponse` с initial generation claim;
 - квалифицирует локальный streak-день и записывает response snapshot в той же
   транзакции закрытия.
 
+До закрытия разговора LLM проверяет достаточность речи. При нехватке информации
+разговор остаётся открытым: бот задаёт уточнение либо повторяет точный текст
+последнего неотвеченного вопроса. Ручной `/report` для открытого разговора
+проходит такую же проверку. Перед изменением состояния сервисы сверяют последний
+message с использованным снимком истории под блокировкой `UserPrompt`.
+
 Для первых двух turns LLM строит follow-up по сохранённой истории.
 `addAssistantMessageIfOpen` записывает ответ только если conversation ещё
-открыт и соответствующий user turn остаётся последним. Это не позволяет
+открыт и соответствующее message остаётся последним в истории. Это не позволяет
 медленному LLM записать устаревший assistant message.
 
 ```mermaid
@@ -112,11 +118,11 @@ sequenceDiagram
     V->>W: transcribe(bytes)
     V->>C: acceptVoiceAndMaybeClaimGeneration
     C->>DB: lock UserPrompt + atomic message/state transition
-    alt turn 1 или 2
+    alt turn 1, 2 или недостаточно информации
         V->>L: generateFollowUp(history)
         V->>C: addAssistantMessageIfOpen
         V->>TG: reply follow-up
-    else turn 3
+    else turn 3+ и достаточно информации
         C->>S: qualifyConversation(tx)
         S->>DB: lock User + day/aggregate/reminder/snapshot
         V->>R: generateClaimedReport(claim)
@@ -145,6 +151,12 @@ turn `VoiceHandler` вызывает тот же workflow напрямую; hand
 для уже закрытой сессии не квалифицирует день заново. Snapshot добавляется в
 форматированный отчёт независимо от того, насколько позже завершатся LLM и
 Telegram delivery.
+
+Анализ и проверка достаточности речи повторяют временные ошибки провайдера
+не более трёх раз суммарно (паузы 1 и 2 секунды вне limiter). Пользователь видит
+индикатор обработки и только конечный результат. После исчерпания попыток
+анализ не превращается в fallback-отчёт: generation помечается failed, новая
+команда `/report` может повторить анализ сохранённых ответов.
 
 После LLM analysis отчёт форматируется как plain text, делится на Telegram-safe
 chunks и в одной транзакции переводится в `generated` вместе с первой delivery

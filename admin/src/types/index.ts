@@ -123,12 +123,14 @@ export interface PersonalityRules {
   id: "default";
   followUpPrompt: string;
   analysisPrompt: string;
+  readinessPrompt: string;
   updatedAt: string;
 }
 
 export interface UpdatePersonalityRulesDto {
   followUpPrompt: string;
   analysisPrompt: string;
+  readinessPrompt?: string;
 }
 
 export interface CreatePersonalityDto {
@@ -287,7 +289,7 @@ export interface AdminSessionDetail extends AdminSessionListItem {
   }>;
   providerCalls: Array<{
     id: string;
-    operation: "follow_up" | "analysis";
+    operation: "follow_up" | "analysis" | "readiness";
     provider: string;
     model: string;
     attempt: number;

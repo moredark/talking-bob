@@ -26,6 +26,7 @@ test("personality seed is idempotent and never overwrites edited rows", async ()
   assert.deepEqual([...rows.keys()], ["friendly", "playful"]);
   assert.match(rules.get("default").followUpPrompt, /English speaking partner/);
   assert.match(rules.get("default").analysisPrompt, /Return ONLY valid JSON/);
+  assert.match(rules.get("default").readinessPrompt, /lastQuestionAnswered/);
   assert.deepEqual([...rows.values()].map(({ key, isActive, isDefault, sortOrder }) => ({ key, isActive, isDefault, sortOrder })), [
     { key: "friendly", isActive: true, isDefault: true, sortOrder: 0 },
     { key: "playful", isActive: true, isDefault: false, sortOrder: 10 },
@@ -43,7 +44,7 @@ test("personality seed is idempotent and never overwrites edited rows", async ()
     sortOrder: 99,
   };
   rows.set("friendly", editedFriendly);
-  const editedRules = { ...rules.get("default"), followUpPrompt: "Edited shared follow-up", analysisPrompt: "Edited shared analysis" };
+  const editedRules = { ...rules.get("default"), followUpPrompt: "Edited shared follow-up", analysisPrompt: "Edited shared analysis", readinessPrompt: "Edited shared readiness" };
   rules.set("default", editedRules);
   await seedPersonalities(prisma);
 

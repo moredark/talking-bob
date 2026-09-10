@@ -7,6 +7,7 @@ export interface AgentPersonalityPrompt {
   key: string;
   followUpPrompt: string;
   analysisPrompt: string;
+  readinessPrompt: string;
 }
 export interface ActiveAgentPersonality {
   key: string;
@@ -29,7 +30,7 @@ export class PersonalityService {
 
   async resolveSelectedOrDefault(key?: string | null): Promise<AgentPersonalityPrompt> {
     const [rules, selected] = await Promise.all([
-      this.prisma.agentPromptRules.findUnique({ where: { id: "default" }, select: { followUpPrompt: true, analysisPrompt: true } }),
+      this.prisma.agentPromptRules.findUnique({ where: { id: "default" }, select: { followUpPrompt: true, analysisPrompt: true, readinessPrompt: true } }),
       key ? this.prisma.agentPersonality.findUnique({ where: { key }, select: { key: true, followUpStylePrompt: true, analysisStylePrompt: true, isActive: true } }) : null,
     ]);
     if (!rules) throw new Error("Shared agent prompt rules are missing");
@@ -41,6 +42,7 @@ export class PersonalityService {
       key: personality.key,
       followUpPrompt: composeSystemPrompt(rules.followUpPrompt, personality.followUpStylePrompt),
       analysisPrompt: composeSystemPrompt(rules.analysisPrompt, personality.analysisStylePrompt),
+      readinessPrompt: rules.readinessPrompt,
     };
   }
 

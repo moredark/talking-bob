@@ -45,7 +45,7 @@ const deactivateCandidate = ref<Personality | null>(null);
 const errors = reactive<Record<string, string>>({});
 const rulesSaving = ref(false);
 const rulesErrors = reactive<Record<string, string>>({});
-const rulesForm = reactive({ followUpPrompt: "", analysisPrompt: "" });
+const rulesForm = reactive({ followUpPrompt: "", analysisPrompt: "", readinessPrompt: "" });
 const form = reactive({
   key: "",
   name: "",
@@ -122,7 +122,7 @@ async function load() {
     const [result, rules] = await Promise.all([adminApi.getPersonalities(), adminApi.getPersonalityRules()]);
     if (requestId === requestSequence) {
       personalities.value = result;
-      Object.assign(rulesForm, { followUpPrompt: rules.followUpPrompt, analysisPrompt: rules.analysisPrompt });
+      Object.assign(rulesForm, { followUpPrompt: rules.followUpPrompt, analysisPrompt: rules.analysisPrompt, readinessPrompt: rules.readinessPrompt });
     }
   } catch {
     if (requestId === requestSequence) loadError.value = true;
@@ -139,15 +139,18 @@ async function saveRules() {
   for (const key of Object.keys(rulesErrors)) delete rulesErrors[key];
   const followUpPrompt = rulesForm.followUpPrompt.trim();
   const analysisPrompt = rulesForm.analysisPrompt.trim();
+  const readinessPrompt = rulesForm.readinessPrompt.trim();
   if (!followUpPrompt) rulesErrors.followUpPrompt = "Введите общие правила продолжения";
   else if (followUpPrompt.length > PROMPT_MAX_LENGTH) rulesErrors.followUpPrompt = `Не более ${PROMPT_MAX_LENGTH} символов`;
   if (!analysisPrompt) rulesErrors.analysisPrompt = "Введите общие правила анализа";
   else if (analysisPrompt.length > PROMPT_MAX_LENGTH) rulesErrors.analysisPrompt = `Не более ${PROMPT_MAX_LENGTH} символов`;
+  if (!readinessPrompt) rulesErrors.readinessPrompt = "Введите правила оценки готовности диалога";
+  else if (readinessPrompt.length > PROMPT_MAX_LENGTH) rulesErrors.readinessPrompt = `Не более ${PROMPT_MAX_LENGTH} символов`;
   if (Object.keys(rulesErrors).length) return;
   rulesSaving.value = true;
   try {
-    const updated = await adminApi.updatePersonalityRules({ followUpPrompt, analysisPrompt });
-    Object.assign(rulesForm, { followUpPrompt: updated.followUpPrompt, analysisPrompt: updated.analysisPrompt });
+    const updated = await adminApi.updatePersonalityRules({ followUpPrompt, analysisPrompt, readinessPrompt });
+    Object.assign(rulesForm, { followUpPrompt: updated.followUpPrompt, analysisPrompt: updated.analysisPrompt, readinessPrompt: updated.readinessPrompt });
     toast.success("Общие правила обновлены");
   } catch {
     toast.error("Не удалось сохранить общие правила");
@@ -246,7 +249,7 @@ onMounted(load);
         </CardHeader>
         <CardContent>
           <div v-if="loading" class="flex flex-col gap-4">
-            <Skeleton class="h-40 w-full" /><Skeleton class="h-56 w-full" />
+            <Skeleton class="h-40 w-full" /><Skeleton class="h-56 w-full" /><Skeleton class="h-48 w-full" />
           </div>
           <FieldGroup v-else>
             <Field :data-invalid="Boolean(rulesErrors.followUpPrompt)">
@@ -260,6 +263,12 @@ onMounted(load);
               <Textarea id="common-analysis-prompt" v-model="rulesForm.analysisPrompt" class="min-h-56" :maxlength="PROMPT_MAX_LENGTH" :aria-invalid="Boolean(rulesErrors.analysisPrompt)" :disabled="rulesSaving" />
               <FieldDescription>Схема JSON, язык и общие критерии анализа. {{ rulesForm.analysisPrompt.length }}/{{ PROMPT_MAX_LENGTH }} символов.</FieldDescription>
               <FieldError v-if="rulesErrors.analysisPrompt">{{ rulesErrors.analysisPrompt }}</FieldError>
+            </Field>
+            <Field :data-invalid="Boolean(rulesErrors.readinessPrompt)">
+              <FieldLabel for="common-readiness-prompt">Общие правила оценки готовности диалога</FieldLabel>
+              <Textarea id="common-readiness-prompt" v-model="rulesForm.readinessPrompt" class="min-h-48" :maxlength="PROMPT_MAX_LENGTH" :aria-invalid="Boolean(rulesErrors.readinessPrompt)" :disabled="rulesSaving" />
+              <FieldDescription>Критерии достаточности информации, проверка последнего вопроса и формат уточнения. {{ rulesForm.readinessPrompt.length }}/{{ PROMPT_MAX_LENGTH }} символов.</FieldDescription>
+              <FieldError v-if="rulesErrors.readinessPrompt">{{ rulesErrors.readinessPrompt }}</FieldError>
             </Field>
           </FieldGroup>
         </CardContent>

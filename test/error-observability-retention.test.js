@@ -270,11 +270,11 @@ test("LLM provider failure is correlated and classified without prompt, body, or
   global.fetch = async () => new Response(providerBody, { status: 503 });
 
   try {
-    const result = await observability.run(
+    llm.sleep = async () => {};
+    await assert.rejects(observability.run(
       { correlationId: "tg-provider-503", requestId: "message:1:2" },
       () => llm.analyzeSpeech(transcript, topic),
-    );
-    assert.equal(result.kind, "fallback");
+    ), { name: "LlmProviderStatusError" });
   } finally {
     global.fetch = originalFetch;
   }

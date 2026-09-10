@@ -32,6 +32,9 @@ function createSubject({
   acceptanceResult,
   assistantResult = { outcome: "inserted" },
   spokenReply,
+  history = [],
+  readinessError,
+  readiness = { ready: true, lastQuestionAnswered: true, question: "" },
 } = {}) {
   const calls = {
     findUser: 0,
@@ -66,7 +69,8 @@ function createSubject({
         calls.precheck += 1;
         return precheckResult;
       },
-      acceptVoiceAndMaybeClaimGeneration: async () => {
+      acceptVoiceAndMaybeClaimGeneration: async (data) => {
+        calls.acceptData = data;
         calls.accept += 1;
         return acceptanceResult ?? {
           outcome: "accepted",
@@ -76,7 +80,7 @@ function createSubject({
         };
       },
       addMessage: async () => undefined,
-      getMessages: async () => [],
+      getMessages: async () => history,
       addAssistantMessageIfOpen: async () => {
         calls.addAssistant += 1;
         return assistantResult;
@@ -95,6 +99,7 @@ function createSubject({
       },
     },
     {
+      assessConversation: async () => { if (readinessError) throw readinessError; return readiness; },
       generateFollowUp: async (...args) => {
         calls.llm += 1;
         calls.llmArgs = args;
@@ -386,4 +391,54 @@ test("VoiceHandler third reply generates report and does not send spoken follow-
   const oldFetch=global.fetch; global.fetch=async()=>new Response("audio");
   try { await subject.handler.handle(subject.context); } finally { global.fetch=oldFetch; }
   assert.equal(subject.calls.report,1); assert.equal(sends,0);
+});
+
+
+test("insufficient third voice sends the readiness question and does not generate a report", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => new Response(new Uint8Array([1])));
+  const question = "What happened next?";
+  const { handler, context, calls } = createSubject({
+    history: [
+      { id: "u1", role: "user", content: "Yes" },
+      { id: "u2", role: "user", content: "Maybe" },
+      { id: "a2", role: "assistant", content: question },
+    ],
+    readiness: { ready: false, lastQuestionAnswered: false, question },
+    acceptanceResult: { outcome: "accepted", message: { id: "u3" }, userMessageCount: 3, generationClaim: null },
+  });
+  await handler.handle(context);
+  assert.deepEqual(calls.acceptData.readiness, { ready: false, expectedLastMessageId: "a2" });
+  assert.equal(calls.report, 0);
+  assert.equal(calls.llm, 0);
+  assert.equal(calls.addAssistant, 1);
+  assert.deepEqual(calls.replies, [question]);
+});
+
+
+test("exhausted readiness still saves the voice as an open turn and offers report retry", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => new Response(new Uint8Array([1])));
+  const { handler, context, calls } = createSubject({
+    history: [
+      { id: "u1", role: "user", content: "Yes" },
+      { id: "u2", role: "user", content: "Maybe" },
+    ],
+    readinessError: new Error("timeout"),
+    acceptanceResult: { outcome: "accepted", message: { id: "u3" }, userMessageCount: 3, generationClaim: null },
+  });
+  await handler.handle(context);
+  assert.equal(calls.accept, 1);
+  assert.equal(calls.acceptData.content, "I visited Rome");
+  assert.deepEqual(calls.acceptData.readiness, { ready: false, expectedLastMessageId: "u2" });
+  assert.equal(calls.report, 0);
+  assert.equal(calls.addAssistant, 0);
+  assert.equal(calls.replies.length, 1);
+  assert.match(calls.replies[0], /ответ сохранён.*\/report/);
+});
+
+
+test("early voice acceptance is fenced and cannot close without a readiness assessment", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => new Response(new Uint8Array([1])));
+  const { handler, context, calls } = createSubject({ history: [{ id: "u1", role: "user", content: "Hello" }] });
+  await handler.handle(context);
+  assert.deepEqual(calls.acceptData.readiness, { ready: false, expectedLastMessageId: "u1" });
 });

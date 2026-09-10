@@ -11,7 +11,7 @@ export interface AiProviderTraceContext {
 }
 
 export interface AiProviderTraceInput extends AiProviderTraceContext {
-  operation: "follow_up" | "analysis";
+  operation: "follow_up" | "analysis" | "readiness";
   provider: string;
   model: string;
   attempt: number;

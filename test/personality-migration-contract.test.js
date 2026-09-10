@@ -12,6 +12,10 @@ const splitMigration = readFileSync(
   join(projectRoot, "prisma/migrations/20260813120000_split_agent_prompt_rules/migration.sql"),
   "utf8",
 );
+const readinessMigration = readFileSync(
+  join(projectRoot, "prisma/migrations/20260910120000_add_readiness_prompt/migration.sql"),
+  "utf8",
+);
 
 function migrationList(source, constantName) {
   const declaration = source.match(new RegExp(`const ${constantName} = \\[([\\s\\S]*?)\\n\\];`));
@@ -43,18 +47,26 @@ test("split migration fails closed while moving shared rules out of personalitie
   assert.match(splitMigration, /DROP COLUMN "analysisPrompt"/);
 });
 
+test("readiness migration adds a required shared prompt with a safe backfill", () => {
+  assert.match(readinessMigration, /ADD COLUMN "readinessPrompt" TEXT NOT NULL DEFAULT/);
+  assert.match(readinessMigration, /DROP DEFAULT/);
+  assert.match(readinessMigration, /"readinessPrompt"/);
+  assert.match(readinessMigration, /"operation" IN \('follow_up', 'analysis', 'readiness'\)/);
+});
+
 test("PostgreSQL integration runners keep the legacy and split migrations ordered", () => {
   const adminIntegration = readFileSync(join(projectRoot, "integration/admin-mvp.integration.js"), "utf8");
   const postgresRunner = readFileSync(join(projectRoot, "scripts/run-postgres-integration.js"), "utf8");
   const expectedTail = [
     "20260812120000_agent_personalities",
     "20260813120000_split_agent_prompt_rules",
+    "20260910120000_add_readiness_prompt",
   ];
 
-  assert.deepEqual(migrationList(adminIntegration, "EXPECTED_MIGRATIONS").slice(-2), expectedTail);
-  assert.deepEqual(migrationList(postgresRunner, "ALL_MIGRATIONS").slice(-2), expectedTail);
+  assert.deepEqual(migrationList(adminIntegration, "EXPECTED_MIGRATIONS").slice(-3), expectedTail);
+  assert.deepEqual(migrationList(postgresRunner, "ALL_MIGRATIONS").slice(-3), expectedTail);
   assert.match(
     postgresRunner,
-    /const LATEST_MIGRATION = "20260813120000_split_agent_prompt_rules";/,
+    /const LATEST_MIGRATION = "20260910120000_add_readiness_prompt";/,
   );
 });

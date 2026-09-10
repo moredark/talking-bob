@@ -64,11 +64,43 @@ export class ReportHandler {
       await ctx.reply("😔 Произошла ошибка при формировании отчёта. Попробуйте ещё раз позже.");
       return;
     }
+    let expectedLastMessageId: string | undefined;
+    if (userPrompt.conversationStatus === "open" && messages.some((message) => message.role === "user")) {
+      const typing = this.startTypingIndicator(ctx);
+      try {
+        const prompt = await this.promptService.getPromptById(userPrompt.promptId);
+        const readiness = await this.llmService.assessConversation(messages.map((message) => ({
+          role: message.role as "user" | "assistant", content: message.content,
+        })), prompt?.textContent ?? "", prompt?.topic ?? "General", {
+          userId: user.id, userPromptId: userPrompt.id, requestId: requestKey,
+          correlationId: this.observability?.current()?.correlationId,
+        }, personality!);
+        if (!readiness.ready) {
+          const inserted = await this.conversationService.addAssistantMessageIfOpen(
+            userPrompt.id, readiness.question, messages[messages.length - 1].id,
+          );
+          if (inserted.outcome === "inserted") await ctx.reply(readiness.question);
+          return;
+        }
+        expectedLastMessageId = messages[messages.length - 1]?.id;
+      } catch (error) {
+        await this.errorLog?.capture({
+          type: "ai", service: "llm", operation: "report.readiness",
+          userId: user.id, requestId: requestKey, error, retryable: true,
+        });
+        await ctx.reply("😔 Не удалось подготовить отчёт. Ваши ответы сохранены. Отправьте /report, чтобы повторить попытку.");
+        return;
+      } finally { clearInterval(typing); }
+    }
     const result = await this.responseService.claimGeneration({
       userId: user.id, userPromptId: userPrompt.id,
       voiceFileId: messages.find((m) => m.role === "user")?.voiceFileId ?? "",
       generationRequestKey: requestKey,
+      ...(expectedLastMessageId ? { expectedLastMessageId } : {}),
     });
+    if (result.outcome === "stale") {
+      await ctx.reply("Диалог изменился во время обработки. Отправьте /report ещё раз."); return;
+    }
     if (result.outcome === "no_messages") {
       await ctx.reply("Вы ещё не отправили ни одного голосового сообщения в этом разговоре."); return;
     }

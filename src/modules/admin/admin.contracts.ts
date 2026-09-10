@@ -90,8 +90,8 @@ export interface PromptItem {
 export interface AgentPersonalityItem { id: string; key: string; name: string; description: string; followUpStylePrompt: string; analysisStylePrompt: string; isActive: boolean; isDefault: boolean; sortOrder: number; createdAt: Date; updatedAt: Date; selectedUsersCount: number; }
 export interface CreatePersonalityDto { key: string; name: string; description?: string; followUpStylePrompt: string; analysisStylePrompt: string; isActive?: boolean; sortOrder?: number; }
 export type UpdatePersonalityDto = Partial<Pick<CreatePersonalityDto, "name" | "description" | "followUpStylePrompt" | "analysisStylePrompt" | "sortOrder">>;
-export interface AgentPromptRulesItem { id: string; followUpPrompt: string; analysisPrompt: string; createdAt: Date; updatedAt: Date; }
-export interface UpdateAgentPromptRulesDto { followUpPrompt: string; analysisPrompt: string; }
+export interface AgentPromptRulesItem { id: string; followUpPrompt: string; analysisPrompt: string; readinessPrompt: string; createdAt: Date; updatedAt: Date; }
+export interface UpdateAgentPromptRulesDto { followUpPrompt: string; analysisPrompt: string; readinessPrompt?: string; }
 
 export interface CreatePromptDto {
   topic: string;
@@ -239,7 +239,7 @@ export interface AdminSessionDetail extends AdminSessionListItem {
     createdAt: Date; updatedAt: Date;
   }>;
   providerCalls: Array<{
-    id: string; operation: "follow_up" | "analysis"; provider: string; model: string;
+    id: string; operation: "follow_up" | "analysis" | "readiness"; provider: string; model: string;
     attempt: number; outcome: "succeeded" | "empty" | "failed"; statusCode: number | null;
     latencyMs: number; inputTokens: number | null; outputTokens: number | null; totalTokens: number | null;
     responseContent: string | null; failureCode: string | null;

@@ -85,7 +85,7 @@ test("LLM traces succeeded, empty, failed, and malformed JSON before parsing", a
     assert.equal(await llm.generateFollowUp([], "Travel", "friendly", trace), "Follow"); assert.deepEqual([calls.at(-1).outcome, calls.at(-1).totalTokens], ["succeeded", 5]);
     global.fetch = async () => response(""); await llm.generateFollowUp([], "Travel", "friendly", trace); assert.equal(calls.at(-1).outcome, "empty");
     global.fetch = async () => response("denied", 503); await llm.generateFollowUp([], "Travel", "friendly", trace); assert.deepEqual([calls.at(-1).outcome, calls.at(-1).statusCode], ["failed", 503]);
-    global.fetch = async () => response("not-json"); assert.equal((await llm.analyzeSpeech("I travelled", "Travel", "en", "friendly", trace)).kind, "fallback"); assert.deepEqual([calls.at(-1).outcome, calls.at(-1).responseContent], ["succeeded", "not-json"]);
+    llm.sleep = async () => {}; global.fetch = async () => response("not-json"); await assert.rejects(llm.analyzeSpeech("I travelled", "Travel", "en", "friendly", trace), /invalid/); assert.deepEqual([calls.at(-1).outcome, calls.at(-1).responseContent], ["succeeded", "not-json"]);
   } finally { global.fetch = originalFetch; }
 });
 
@@ -106,8 +106,9 @@ test("LLM writes exactly one trace per provider attempt and classifies invalid a
     const invalidCalls = [];
     const invalidLlm = new LLMService(config(), new AiRequestLimiterService(1), undefined, { write: (value) => invalidCalls.push(value) });
     global.fetch = async () => response("not-json", 200);
-    assert.equal((await invalidLlm.analyzeSpeech("I travelled", "Travel", "en", "friendly", { userId, userPromptId: sessionId, userResponseId: responseId })).kind, "fallback");
-    assert.equal(invalidCalls.length, 1);
+    invalidLlm.sleep = async () => {};
+    await assert.rejects(invalidLlm.analyzeSpeech("I travelled", "Travel", "en", "friendly", { userId, userPromptId: sessionId, userResponseId: responseId }), /invalid/);
+    assert.equal(invalidCalls.length, 3);
     assert.deepEqual({ attempt: invalidCalls[0].attempt, outcome: invalidCalls[0].outcome, statusCode: invalidCalls[0].statusCode, responseContent: invalidCalls[0].responseContent }, {
       attempt: 1, outcome: "succeeded", statusCode: 200, responseContent: "not-json",
     });

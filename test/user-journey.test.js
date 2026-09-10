@@ -101,6 +101,7 @@ test("deterministic user journey reaches an automatic report and a non-repeating
   };
   const llmCalls = { followUps: [], analyses: [] };
   const llm = {
+    assessConversation: async () => ({ ready: true, lastQuestionAnswered: true, question: "" }),
     async generateFollowUp(history, topic, personality) {
       llmCalls.followUps.push({ history, topic, personality });
       return llmCalls.followUps.length === 1

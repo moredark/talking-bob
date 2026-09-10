@@ -17,7 +17,7 @@ const SAFE_OPERATIONS = new Set([
   "update.handle", "callback.acknowledge", "runner.start", "runner.run",
   "start.release_quota", "start.send_welcome", "voice.process", "report.generate",
   "report.prepare_delivery", "report.persist_attempt", "report.send_chunk",
-  "report.persist_success", "transcribe", "analyze_speech", "generate_follow_up",
+  "report.persist_success", "transcribe", "analyze_speech", "assess_conversation", "report.readiness", "generate_follow_up",
   "claim.dispatch", "tick", "delivery.bot_unavailable", "delivery.persist_success",
   "delivery.send", "delivery.persist_failure", "retention.cleanup", "unknown",
 ]);

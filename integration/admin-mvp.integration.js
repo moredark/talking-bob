@@ -47,6 +47,7 @@ const EXPECTED_MIGRATIONS = [
   "20260811120000_add_streaks",
   "20260812120000_agent_personalities",
   "20260813120000_split_agent_prompt_rules",
+  "20260910120000_add_readiness_prompt",
 ];
 
 const prisma = new PrismaClient();

@@ -35,7 +35,7 @@ test("listActive returns at most 20 active personalities in stable display order
 test("resolveSelectedOrDefault returns the selected active personality without reading the default", async () => {
   const selected = prompt("third");
   let fallbackReads = 0;
-  const service = new PersonalityService({ agentPromptRules: { findUnique: async () => ({ followUpPrompt: "Shared follow-up", analysisPrompt: "Shared analysis" }) }, agentPersonality: {
+  const service = new PersonalityService({ agentPromptRules: { findUnique: async () => ({ followUpPrompt: "Shared follow-up", analysisPrompt: "Shared analysis", readinessPrompt: "Shared readiness" }) }, agentPersonality: {
     findUnique: async ({ where, select }) => {
       assert.deepEqual(where, { key: "third" });
       assert.deepEqual(select, { key: true, followUpStylePrompt: true, analysisStylePrompt: true, isActive: true });
@@ -45,7 +45,7 @@ test("resolveSelectedOrDefault returns the selected active personality without r
   } });
 
   assert.deepEqual(await service.resolveSelectedOrDefault("third"), {
-    key: "third", followUpPrompt: "Shared follow-up\nthird follow-up", analysisPrompt: "Shared analysis\nthird analysis",
+    key: "third", followUpPrompt: "Shared follow-up\nthird follow-up", analysisPrompt: "Shared analysis\nthird analysis", readinessPrompt: "Shared readiness",
   });
   assert.equal(fallbackReads, 0);
 });
@@ -60,13 +60,13 @@ test("resolveSelectedOrDefault falls back for absent, missing, or inactive selec
       let selectedReads = 0;
       let fallbackQuery;
       const fallback = prompt("friendly");
-      const service = new PersonalityService({ agentPromptRules: { findUnique: async () => ({ followUpPrompt: "Shared follow-up", analysisPrompt: "Shared analysis" }) }, agentPersonality: {
+      const service = new PersonalityService({ agentPromptRules: { findUnique: async () => ({ followUpPrompt: "Shared follow-up", analysisPrompt: "Shared analysis", readinessPrompt: "Shared readiness" }) }, agentPersonality: {
         findUnique: async () => { selectedReads += 1; return scenario.selected; },
         findFirst: async (query) => { fallbackQuery = query; return fallback; },
       } });
 
       assert.deepEqual(await service.resolveSelectedOrDefault(scenario.key), {
-        key: "friendly", followUpPrompt: "Shared follow-up\nfriendly follow-up", analysisPrompt: "Shared analysis\nfriendly analysis",
+        key: "friendly", followUpPrompt: "Shared follow-up\nfriendly follow-up", analysisPrompt: "Shared analysis\nfriendly analysis", readinessPrompt: "Shared readiness",
       });
       assert.equal(selectedReads, scenario.expectedSelectedReads);
       assert.deepEqual(fallbackQuery, {
@@ -78,7 +78,7 @@ test("resolveSelectedOrDefault falls back for absent, missing, or inactive selec
 });
 
 test("resolveSelectedOrDefault fails loudly when no active default exists", async () => {
-  const service = new PersonalityService({ agentPromptRules: { findUnique: async () => ({ followUpPrompt: "Shared follow-up", analysisPrompt: "Shared analysis" }) }, agentPersonality: {
+  const service = new PersonalityService({ agentPromptRules: { findUnique: async () => ({ followUpPrompt: "Shared follow-up", analysisPrompt: "Shared analysis", readinessPrompt: "Shared readiness" }) }, agentPersonality: {
     findUnique: async () => null,
     findFirst: async () => null,
   } });

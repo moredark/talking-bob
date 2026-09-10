@@ -13,6 +13,7 @@ import {
   ILLMService,
   SpeechAnalysisResult,
   ConversationMessage,
+  ConversationReadiness,
 } from "../interfaces";
 import {
   AiRequestLimiterClosedError,
@@ -21,6 +22,8 @@ import {
 } from "./ai-request-limiter.service";
 import { ErrorLogService } from "../../error-log";
 import { AiProviderTraceContext, AiProviderTraceWriter } from "./ai-provider-trace-writer.service";
+
+import { assessConversationReadiness } from "./conversation-readiness";
 
 class LlmProviderStatusError extends Error {
   constructor(readonly statusCode: number) {
@@ -73,38 +76,69 @@ export class LLMService implements ILLMService {
     try {
       const attempts = [
         { temperature: 0.5, maxTokens: analysisMaxTokens },
-        {
-          temperature: 0.3,
-          maxTokens: Math.min(32_000, analysisMaxTokens + 500),
-        },
+        { temperature: 0.3, maxTokens: Math.min(32_000, analysisMaxTokens + 500) },
+        { temperature: 0.3, maxTokens: Math.min(32_000, analysisMaxTokens + 500) },
       ];
 
       for (let index = 0; index < attempts.length; index += 1) {
         const attempt = attempts[index];
-        const { content } = await this.requestTracedCompletion({
-          messages,
-          temperature: attempt.temperature,
-          top_p: 0.95,
-          presence_penalty: 0,
-          max_tokens: attempt.maxTokens,
-        }, "analysis", index + 1, trace);
-        if (content) {
+        try {
+          const { content } = await this.requestTracedCompletion({
+            messages,
+            temperature: attempt.temperature,
+            top_p: 0.95,
+            presence_penalty: 0,
+            max_tokens: attempt.maxTokens,
+          }, "analysis", index + 1, trace);
+          if (!content) throw new Error("LLM analysis response was empty");
           const feedback = this.parseJsonResponse(content);
           this.logger.log("Analysis completed");
           return feedback;
+        } catch (error) {
+          const canRetry = index < attempts.length - 1 &&
+            (this.isRetryable(error) || this.isInvalidAnalysisError(error));
+          if (!canRetry) throw error;
+          this.logger.warn(`Analysis attempt ${index + 1}/${attempts.length} failed (${this.errorKind(error)}), retrying`);
+          await this.sleep((index + 1) * 1000);
         }
-
-        this.logger.warn(
-          `Analysis response is empty on attempt ${index + 1}/${attempts.length}`,
-        );
       }
 
-      return this.createFallbackFeedback(transcript);
+      throw new Error("LLM analysis failed after all retry attempts");
     } catch (error) {
       this.logger.error(`Speech analysis failed (${this.errorKind(error)})`);
       await this.captureFailure("analyze_speech", startedAt, error);
-      if (this.mustPropagate(error)) throw error;
-      return this.createFallbackFeedback(transcript);
+      throw error;
+    }
+  }
+
+  async assessConversation(
+    history: ConversationMessage[],
+    initialQuestion: string,
+    topic: string,
+    trace: AiProviderTraceContext | undefined,
+    personality: AgentPersonalityPrompt,
+  ): Promise<ConversationReadiness> {
+    const startedAt = Date.now();
+    try {
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          return await assessConversationReadiness(history, initialQuestion, topic, personality.readinessPrompt, async (messages) => {
+            const { content } = await this.requestTracedCompletion({
+              messages, temperature: 0.2,
+              max_tokens: this.settings.productNumber("LLM_FOLLOWUP_MAX_TOKENS"),
+            }, "readiness", attempt, trace);
+            return content;
+          });
+        } catch (error) {
+          const invalid = error instanceof SyntaxError || (error instanceof Error && error.message === "invalid_conversation_readiness");
+          if (attempt === 3 || (!this.isRetryable(error) && !invalid)) throw error;
+          await this.sleep(attempt * 1000);
+        }
+      }
+      throw new Error("invalid_conversation_readiness");
+    } catch (error) {
+      await this.captureFailure("assess_conversation", startedAt, error);
+      throw error;
     }
   }
 
@@ -156,7 +190,7 @@ export class LLMService implements ILLMService {
 
   private async requestTracedCompletion(
     payload: Record<string, unknown>,
-    operation: "follow_up" | "analysis",
+    operation: "follow_up" | "analysis" | "readiness",
     attempt: number,
     trace?: AiProviderTraceContext,
   ): Promise<{ content: string | null }> {
@@ -318,21 +352,19 @@ export class LLMService implements ILLMService {
 
       throw new Error("No valid JSON found in model response");
     } catch {
-      this.logger.warn("Failed to parse JSON response, using fallback");
-
-      const extractedSummary = this.extractSummaryFromText(cleanedContent);
-      const extractedPoints = this.extractPointsFromText(cleanedContent);
-
-      return {
-        version: 1,
-        kind: "fallback",
-        summary:
-          extractedSummary ||
-          "Ответ модели не удалось разобрать полностью. Показана доступная часть и базовая оценка.",
-        improvementPoints: extractedPoints,
-        overallScore: 5,
-      };
+      this.logger.warn("Failed to parse JSON response");
+      throw new Error("LLM analysis response was invalid");
     }
+  }
+
+  private isInvalidAnalysisError(error: unknown): boolean {
+    return error instanceof SyntaxError || (error instanceof Error &&
+      (error.message === "LLM analysis response was invalid" ||
+        error.message === "LLM analysis response was empty"));
+  }
+
+  private async sleep(milliseconds: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, milliseconds));
   }
 
   private stripCodeFences(content: string): string {
@@ -500,20 +532,6 @@ export class LLMService implements ILLMService {
     }
 
     return Array.from(unique);
-  }
-
-  private createFallbackFeedback(transcript: string): SpeechAnalysisResult {
-    return {
-      version: 1,
-      kind: "fallback",
-      summary:
-        "Модель не предоставила полный анализ. Показана базовая автоматическая оценка ответа.",
-      improvementPoints: [
-        "Добавьте больше деталей: причина, пример, сравнение.",
-        "Используйте связки: because, however, for example, in my opinion.",
-      ],
-      overallScore: transcript.trim().split(/\s+/).length >= 20 ? 6 : 5,
-    };
   }
 
   private shortenText(text: string, maxChars: number): string {

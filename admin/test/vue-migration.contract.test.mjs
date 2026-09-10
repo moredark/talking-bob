@@ -146,8 +146,8 @@ test("personalities SPA preserves exact API, protected route, and complete manag
   assert.match(page, /adminApi\.activatePersonality\(personality\.id\)/);
   assert.match(page, /adminApi\.deactivatePersonality\(personality\.id\)/);
   assert.match(page, /adminApi\.getPersonalityRules\(\)/);
-  assert.match(page, /adminApi\.updatePersonalityRules\(\{\s*followUpPrompt,\s*analysisPrompt\s*\}\)/);
-  assert.match(page, /Общие правила[\s\S]*common-follow-up-prompt[\s\S]*common-analysis-prompt/);
+  assert.match(page, /adminApi\.updatePersonalityRules\(\{\s*followUpPrompt,\s*analysisPrompt,\s*readinessPrompt\s*\}\)/);
+  assert.match(page, /Общие правила[\s\S]*common-follow-up-prompt[\s\S]*common-analysis-prompt[\s\S]*common-readiness-prompt/);
   assert.match(page, /adminApi\.setDefaultPersonality\(personality\.id\)/);
   assert.match(page, /async function refreshPersonalities\(\)[\s\S]*personalities\.value\s*=\s*await adminApi\.getPersonalities\(\)/);
   assert.match(page, /Личность обновлена[\s\S]*refreshPersonalities\(\)[\s\S]*runAction[\s\S]*refreshPersonalities\(\)/);
