@@ -165,19 +165,32 @@ export class LLMService implements ILLMService {
     ];
 
     try {
-      const { content } = await this.requestTracedCompletion({
+      const payload = {
         messages,
         temperature: 0.5,
         top_p: 0.95,
         presence_penalty: 0,
         max_tokens: this.settings.productNumber("LLM_FOLLOWUP_MAX_TOKENS"),
-      }, "follow_up", 1, trace);
-      if (!content) {
-        this.logger.warn("Follow-up response is empty, using fallback");
-        return this.defaultFollowUp;
+      };
+
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          const { content } = await this.requestTracedCompletion(payload, "follow_up", attempt, trace);
+          if (content) return content;
+          if (attempt === 3) {
+            this.logger.warn("Follow-up response was empty after retries, using fallback");
+            return this.defaultFollowUp;
+          }
+          this.logger.warn(`Follow-up attempt ${attempt}/3 returned empty, retrying`);
+          await this.sleep(attempt * 1000);
+        } catch (error) {
+          if (this.mustPropagate(error) || !this.isRetryable(error) || attempt === 3) throw error;
+          this.logger.warn(`Follow-up attempt ${attempt}/3 failed (${this.errorKind(error)}), retrying`);
+          await this.sleep(attempt * 1000);
+        }
       }
 
-      return content;
+      return this.defaultFollowUp;
     } catch (error) {
       this.logger.error(
         `Follow-up generation failed (${this.errorKind(error)})`,
@@ -233,6 +246,10 @@ export class LLMService implements ILLMService {
     payload: Record<string, unknown>,
   ): Promise<Response> {
 
+    const modelOptions = this.model.startsWith("Qwen/Qwen3.6-")
+      ? { chat_template_kwargs: { enable_thinking: false } }
+      : {};
+
     return this.requestLimiter.run((signal) =>
       boundedFetch(this.apiUrl, {
         method: "POST",
@@ -240,7 +257,7 @@ export class LLMService implements ILLMService {
           Authorization: `Bearer ${this.runtimeConfig.cloudRuApiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ model: this.model, ...payload }),
+        body: JSON.stringify({ model: this.model, ...payload, ...modelOptions }),
         signal,
         timeoutMs: this.runtimeConfig.externalRequests.llm.timeoutMs,
         maxResponseBytes:

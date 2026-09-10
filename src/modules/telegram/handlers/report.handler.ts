@@ -9,6 +9,7 @@ import { UserService } from "../../user";
 import { PersonalityService } from "../../personality";
 import { ErrorLogService, ObservabilityContextService } from "../../error-log";
 import { ReportWorkflowService } from "../report-workflow.service";
+import { readinessReply } from "../readiness-reply";
 
 @Injectable()
 export class ReportHandler {
@@ -76,10 +77,15 @@ export class ReportHandler {
           correlationId: this.observability?.current()?.correlationId,
         }, personality!);
         if (!readiness.ready) {
+          const latest = messages[messages.length - 1];
+          if (latest?.role === "assistant" && latest.content.trim() === readiness.question.trim()) {
+            await ctx.reply(readinessReply(readiness.question, readiness));
+            return;
+          }
           const inserted = await this.conversationService.addAssistantMessageIfOpen(
-            userPrompt.id, readiness.question, messages[messages.length - 1].id,
+            userPrompt.id, readiness.question, latest.id,
           );
-          if (inserted.outcome === "inserted") await ctx.reply(readiness.question);
+          if (inserted.outcome === "inserted") await ctx.reply(readinessReply(readiness.question, readiness));
           return;
         }
         expectedLastMessageId = messages[messages.length - 1]?.id;

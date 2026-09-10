@@ -16,6 +16,7 @@ import { ReportWorkflowService } from "../report-workflow.service";
 import { PersonalityService } from "../../personality";
 import { ErrorLogService, ObservabilityContextService } from "../../error-log";
 import { AmbiguousSpokenReplyDeliveryError, SpokenReplyService } from "../spoken-reply.service";
+import { readinessExplanation } from "../readiness-reply";
 
 type VoiceProcessingStage =
   | "personality_resolve"
@@ -158,6 +159,13 @@ export class VoiceHandler {
       if (inserted.outcome !== "inserted") return;
       const keyboard = new InlineKeyboard().text("📊 Получить отчёт", "report");
       stage = "telegram_reply";
+      if (readiness && !readiness.ready) {
+        try {
+          await ctx.reply(readinessExplanation(readiness));
+        } catch (error) {
+          this.logger.warn(`Failed to send readiness explanation (${this.errorKind(error)})`);
+        }
+      }
       if (this.spokenReply) {
         await this.spokenReply.send(ctx, followUp, keyboard);
       } else {

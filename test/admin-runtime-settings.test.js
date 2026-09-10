@@ -38,6 +38,7 @@ test("runtime registry is closed, typed, bounded, and documents every consumer/e
   const window = registry.registryEntry("COMMAND_WINDOW_MINUTES");
   assert.deepEqual([window.defaultValue, window.min, window.max], [60, 1, 10080]);
   const model = registry.registryEntry("LLM_MODEL");
+  assert.equal(model.defaultValue, "Qwen/Qwen3.6-35B-A3B");
   assert.equal(registry.validateRuntimeOverride(model, "  model/name  "), true);
   assert.equal(registry.normalizeRuntimeOverride(model, "  model/name  "), "model/name");
   assert.equal(registry.validateRuntimeOverride(model, "x".repeat(161)), false);

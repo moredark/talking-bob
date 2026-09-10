@@ -23,6 +23,7 @@ export interface ConversationReadiness {
   ready: boolean;
   lastQuestionAnswered: boolean;
   question: string;
+  insufficiencyReason?: "too_short" | "needs_detail";
 }
 
 export interface ILLMService {

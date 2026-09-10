@@ -117,10 +117,12 @@ test("LLM writes exactly one trace per provider attempt and classifies invalid a
     const failedLlm = new LLMService(config(), new AiRequestLimiterService(1), undefined, { write: (value) => failedCalls.push(value) });
     global.fetch = async () => response("denied", 503);
     await failedLlm.generateFollowUp([], "Travel", "friendly", { userId, userPromptId: sessionId });
-    assert.equal(failedCalls.length, 1);
-    assert.deepEqual({ attempt: failedCalls[0].attempt, outcome: failedCalls[0].outcome, statusCode: failedCalls[0].statusCode }, {
-      attempt: 1, outcome: "failed", statusCode: 503,
-    });
+    assert.equal(failedCalls.length, 3);
+    assert.deepEqual(failedCalls.map(({ attempt, outcome, statusCode }) => ({ attempt, outcome, statusCode })), [
+      { attempt: 1, outcome: "failed", statusCode: 503 },
+      { attempt: 2, outcome: "failed", statusCode: 503 },
+      { attempt: 3, outcome: "failed", statusCode: 503 },
+    ]);
   } finally {
     global.fetch = originalFetch;
   }

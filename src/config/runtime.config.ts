@@ -96,7 +96,7 @@ export function parseRuntimeConfig(
   if (!isUrl(llmApiUrl, ["http:", "https:"])) {
     issues.push("LLM_API_URL must be a valid HTTP(S) URL");
   }
-  const llmModel = optional(env, "LLM_MODEL") || "zai-org/GLM-4.7";
+  const llmModel = optional(env, "LLM_MODEL") || "Qwen/Qwen3.6-35B-A3B";
   if (llmModel.length > 160 || /[\u0000-\u001f\u007f]/.test(llmModel)) {
     issues.push("LLM_MODEL must be a trimmed control-free string of at most 160 characters");
   }

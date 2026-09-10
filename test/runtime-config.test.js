@@ -20,6 +20,7 @@ test("runtime config parses required values and bounded defaults", () => {
   assert.equal(config.server.port, 3000);
   assert.equal(config.concurrency.telegramUpdates, 4);
   assert.equal(config.jwtSecret, REQUIRED.JWT_SECRET);
+  assert.equal(config.llm.model, "Qwen/Qwen3.6-35B-A3B");
   assert.equal(config.concurrency.aiRequests, 2);
   assert.equal(config.concurrency.aiRequestMaxPending, 8);
   assert.equal(config.voice.maxFileSizeBytes, 20 * 1024 * 1024);

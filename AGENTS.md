@@ -84,7 +84,7 @@ Six tables (see `prisma/schema.prisma`):
 TELEGRAM_BOT_TOKEN    # Required
 DATABASE_URL          # PostgreSQL connection
 CLOUD_RU_API_KEY      # For Whisper STT and LLM
-LLM_MODEL             # e.g., Qwen/Qwen3-235B-A22B-Instruct-2507
+LLM_MODEL             # e.g., Qwen/Qwen3.6-35B-A3B
 ```
 
 ## Development Rules

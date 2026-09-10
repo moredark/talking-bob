@@ -16,6 +16,10 @@ const readinessMigration = readFileSync(
   join(projectRoot, "prisma/migrations/20260910120000_add_readiness_prompt/migration.sql"),
   "utf8",
 );
+const refinedReadinessMigration = readFileSync(
+  join(projectRoot, "prisma/migrations/20260910130000_refine_readiness_prompt/migration.sql"),
+  "utf8",
+);
 
 function migrationList(source, constantName) {
   const declaration = source.match(new RegExp(`const ${constantName} = \\[([\\s\\S]*?)\\n\\];`));
@@ -52,6 +56,9 @@ test("readiness migration adds a required shared prompt with a safe backfill", (
   assert.match(readinessMigration, /DROP DEFAULT/);
   assert.match(readinessMigration, /"readinessPrompt"/);
   assert.match(readinessMigration, /"operation" IN \('follow_up', 'analysis', 'readiness'\)/);
+  assert.match(refinedReadinessMigration, /WHERE "id" = 'default' AND "readinessPrompt"/);
+  assert.match(refinedReadinessMigration, /meaningfulSentenceCount/);
+  assert.match(refinedReadinessMigration, /ready means the learner supplied meaningful English sentences/);
 });
 
 test("PostgreSQL integration runners keep the legacy and split migrations ordered", () => {
@@ -61,12 +68,13 @@ test("PostgreSQL integration runners keep the legacy and split migrations ordere
     "20260812120000_agent_personalities",
     "20260813120000_split_agent_prompt_rules",
     "20260910120000_add_readiness_prompt",
+    "20260910130000_refine_readiness_prompt",
   ];
 
-  assert.deepEqual(migrationList(adminIntegration, "EXPECTED_MIGRATIONS").slice(-3), expectedTail);
-  assert.deepEqual(migrationList(postgresRunner, "ALL_MIGRATIONS").slice(-3), expectedTail);
+  assert.deepEqual(migrationList(adminIntegration, "EXPECTED_MIGRATIONS").slice(-4), expectedTail);
+  assert.deepEqual(migrationList(postgresRunner, "ALL_MIGRATIONS").slice(-4), expectedTail);
   assert.match(
     postgresRunner,
-    /const LATEST_MIGRATION = "20260910120000_add_readiness_prompt";/,
+    /const LATEST_MIGRATION = "20260910130000_refine_readiness_prompt";/,
   );
 });

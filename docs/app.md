@@ -107,11 +107,14 @@ work returns a busy response.
 AI analysis and readiness requests retry transient timeouts, network failures,
 HTTP 429 and 5xx, and unusable model output within a maximum of three provider
 attempts per operation, waiting 1 then 2 seconds outside the concurrency limiter.
-Retries are invisible to the user: the typing indicator continues and no
-intermediate error or extra report is sent. Cancellation, shutdown, overload,
-and permanent provider errors are not retried. Exhaustion reports a failure
-with `/report` retry guidance; it never saves a fallback as a completed report.
-Previously saved reports, including legacy fallbacks, remain resendable.
+Follow-up generation also makes up to three attempts for empty output, network
+or timeout errors, HTTP 429, and 5xx; after exhaustion it returns the existing
+fallback follow-up. Non-retryable 4xx responses are attempted once. Retries are
+invisible to the user: the typing indicator continues and no intermediate error
+or extra report is sent. Cancellation, shutdown, and overload are not retried.
+Because each attempt uses the configured LLM timeout, repeated attempts can
+accumulate more elapsed time than one request timeout. Exhaustion reports a
+failure with `/report` retry guidance; it never saves a fallback as a completed report.
 
 The readiness system prompt is stored as `agent_prompt_rules.readinessPrompt` beside the shared follow-up and analysis prompts. It is loaded in the same personality snapshot and can be edited under **Common rules** in the admin UI; the application code only builds the conversation evidence payload and validates the configured JSON response.
 
@@ -287,7 +290,7 @@ which accepts a finite decimal.
 | `TTS_REQUEST_MAX_RESPONSE_BYTES` | `2097152`; 1..2097152 | synthesis response limit | no |
 | `PORT` | `3000`; 1..65535 | Nest HTTP listener | no |
 | `LLM_API_URL` | `https://foundation-models.api.cloud.ru/v1/chat/completions` | LLM; HTTP(S) URL | no |
-| `LLM_MODEL` | `zai-org/GLM-4.7` | Cloud.ru model identifier | no |
+| `LLM_MODEL` | `Qwen/Qwen3.6-35B-A3B` | Cloud.ru model identifier | no |
 | `TELEGRAM_UPDATE_CONCURRENCY` | `4`; 1..100 | Telegram update runner | no |
 | `TELEGRAM_API_TIMEOUT_MS` | `40000`; 5000..120000 | grammY API timeout, ms | no |
 | `AI_REQUEST_CONCURRENCY` | `2`; 1..50 | AI request limiter | no |

@@ -26,6 +26,7 @@ function config({ whisper = {}, llm = {} } = {}) {
       model: "test-model",
       analysisMaxTokens: 256,
       followUpMaxTokens: 128,
+      ...llm,
     },
     externalRequests: {
       whisper: { timeoutMs: 50, maxResponseBytes: 256, ...whisper },
@@ -137,7 +138,7 @@ test("Whisper rejects an oversized provider response without retrying POST", asy
   assert.equal(calls, 1);
 });
 
-test("LLM times out an aborted provider POST without transport retry", async () => {
+test("LLM retries a timed out provider POST before fallback", async () => {
   const service = new LLMService(
     config({ llm: { timeoutMs: 5 } }),
     new AiRequestLimiterService(1),
@@ -162,8 +163,103 @@ test("LLM times out an aborted provider POST without transport retry", async () 
     global.fetch = originalFetch;
   }
 
-  assert.equal(calls, 1);
+  assert.equal(calls, 3);
   assert.match(result, /specific example/i);
+});
+
+test("Qwen3.6 disables thinking for analysis, readiness, and follow-up payloads", async (t) => {
+  const service = new LLMService(config({ llm: { model: "Qwen/Qwen3.6-35B-A3B" } }), new AiRequestLimiterService(1));
+  service.sleep = async () => {};
+  const bodies = [];
+  t.mock.method(globalThis, "fetch", async (_url, options) => {
+    bodies.push(JSON.parse(options.body));
+    if (bodies.length === 2) return analysisResponse(JSON.stringify({ ready: true, lastQuestionAnswered: true }));
+    if (bodies.length === 3) return analysisResponse("Follow-up");
+    return analysisResponse(JSON.stringify({ summary: "Good", improvementPoints: [], overallScore: 8 }));
+  });
+  await service.analyzeSpeech("I travel", "Travel");
+  await service.assessConversation([{ role: "user", content: "I visited Rome" }, { role: "user", content: "I liked the food" }], "Question?", "Travel", undefined, READINESS_PERSONALITY);
+  await service.generateFollowUp([], "Travel");
+  assert.deepEqual(bodies.map(({ chat_template_kwargs }) => chat_template_kwargs), [
+    { enable_thinking: false }, { enable_thinking: false }, { enable_thinking: false },
+  ]);
+});
+
+test("non-Qwen models omit the thinking payload option", async (t) => {
+  const service = new LLMService(config(), new AiRequestLimiterService(1));
+  t.mock.method(globalThis, "fetch", async (_url, options) => {
+    const body = JSON.parse(options.body);
+    assert.equal(Object.hasOwn(body, "chat_template_kwargs"), false);
+    return analysisResponse("Follow-up");
+  });
+  await service.generateFollowUp([], "Travel");
+});
+
+test("follow-up retries empty and transient responses with bounded delays", async (t) => {
+  const service = new LLMService(config(), new AiRequestLimiterService(1));
+  const delays = [];
+  service.sleep = async (delay) => delays.push(delay);
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    calls += 1;
+    if (calls === 1) return analysisResponse("   ");
+    if (calls === 2) return new Response("busy", { status: 503 });
+    return analysisResponse("Specific example");
+  });
+  assert.equal(await service.generateFollowUp([], "Travel"), "Specific example");
+  assert.equal(calls, 3);
+  assert.deepEqual(delays, [1000, 2000]);
+});
+
+test("follow-up retries a network error and recovers", async (t) => {
+  const service = new LLMService(config(), new AiRequestLimiterService(1));
+  service.sleep = async () => {};
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    calls += 1;
+    if (calls === 1) throw new TypeError("network");
+    return analysisResponse("Recovered after network error");
+  });
+  assert.equal(await service.generateFollowUp([], "Travel"), "Recovered after network error");
+  assert.equal(calls, 2);
+});
+
+test("follow-up retries HTTP 429 and recovers", async (t) => {
+  const service = new LLMService(config(), new AiRequestLimiterService(1));
+  service.sleep = async () => {};
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    calls += 1;
+    if (calls === 1) return new Response("rate limited", { status: 429 });
+    return analysisResponse("Recovered after rate limit");
+  });
+  assert.equal(await service.generateFollowUp([], "Travel"), "Recovered after rate limit");
+  assert.equal(calls, 2);
+});
+
+test("follow-up propagates an aborted bounded request without retry", async () => {
+  const service = new LLMService(config(), new AiRequestLimiterService(1));
+  const error = new BoundedHttpError("aborted", 1);
+  let calls = 0;
+  service.requestTracedCompletion = async () => { calls += 1; throw error; };
+  await assert.rejects(service.generateFollowUp([], "Travel"), (received) => received === error);
+  assert.equal(calls, 1);
+});
+test("follow-up returns fallback after three empty responses", async (t) => {
+  const service = new LLMService(config(), new AiRequestLimiterService(1));
+  service.sleep = async () => {};
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async () => { calls += 1; return analysisResponse(" "); });
+  assert.match(await service.generateFollowUp([], "Travel"), /specific example/i);
+  assert.equal(calls, 3);
+});
+
+test("follow-up does not retry a non-retryable provider error", async (t) => {
+  const service = new LLMService(config(), new AiRequestLimiterService(1));
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async () => { calls += 1; return new Response("missing", { status: 404 }); });
+  assert.match(await service.generateFollowUp([], "Travel"), /specific example/i);
+  assert.equal(calls, 1);
 });
 
 test("LLM marks a valid speech analysis response as model output", async () => {
@@ -460,6 +556,6 @@ test("conversation readiness retries a malformed provider JSON envelope", async 
     attempts += 1;
     return attempts === 1 ? new Response("not json") : analysisResponse(JSON.stringify({ ready: true, lastQuestionAnswered: true }));
   });
-  assert.equal((await service.assessConversation([], "Question?", "Travel", undefined, READINESS_PERSONALITY)).ready, true);
+  assert.equal((await service.assessConversation([{ role: "user", content: "I visited Rome" }, { role: "user", content: "I liked the food" }], "Question?", "Travel", undefined, READINESS_PERSONALITY)).ready, true);
   assert.equal(attempts, 2);
 });

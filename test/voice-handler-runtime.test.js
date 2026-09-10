@@ -411,9 +411,24 @@ test("insufficient third voice sends the readiness question and does not generat
   assert.equal(calls.report, 0);
   assert.equal(calls.llm, 0);
   assert.equal(calls.addAssistant, 1);
-  assert.deepEqual(calls.replies, [question]);
+  assert.deepEqual(calls.replies, ["Пока недостаточно материала для полезного разбора. Добавьте, пожалуйста, немного деталей:", question]);
 });
 
+
+test("voice keeps the English readiness question when Russian explanation delivery fails", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => new Response(new Uint8Array([1])));
+  let spoken = 0;
+  const { handler, context, calls } = createSubject({
+    history: [{ id: "u1", role: "user", content: "Yes" }, { id: "u2", role: "user", content: "Maybe" }],
+    readiness: { ready: false, lastQuestionAnswered: false, question: "What happened next?", insufficiencyReason: "too_short" },
+    acceptanceResult: { outcome: "accepted", message: { id: "u3" }, userMessageCount: 3, generationClaim: null },
+    spokenReply: { send: async () => { spoken += 1; } },
+  });
+  context.reply = async () => { throw new Error("Telegram explanation failed"); };
+  await handler.handle(context);
+  assert.equal(spoken, 1);
+  assert.equal(calls.replies.length, 0);
+});
 
 test("exhausted readiness still saves the voice as an open turn and offers report retry", async (t) => {
   t.mock.method(globalThis, "fetch", async () => new Response(new Uint8Array([1])));

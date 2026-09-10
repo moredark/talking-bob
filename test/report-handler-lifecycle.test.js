@@ -443,7 +443,24 @@ test("manual report with insufficient speech asks for detail without closing or 
   assert.equal(calls.claim.length, 0);
   assert.equal(calls.llm.length, 0);
   assert.deepEqual(calls.questions, [["user-prompt-1", "Why do you like it?", "u1"]]);
-  assert.deepEqual(replies, [["Why do you like it?"]]);
+  assert.deepEqual(replies, [["Пока недостаточно материала для полезного разбора. Добавьте, пожалуйста, немного деталей:\n\nWhy do you like it?"]]);
+});
+
+test("manual report does not duplicate an existing readiness question", async () => {
+  const question = "Why do you like it?";
+  const { handler, calls } = createSubject({
+    conversationStatus: "open",
+    messages: [
+      { id: "u1", role: "user", content: "I like travel", voiceFileId: "voice-1" },
+      { id: "a1", role: "assistant", content: question },
+    ],
+    llm: { assessConversation: async () => ({ ready: false, lastQuestionAnswered: true, question }) },
+  });
+  const { ctx, replies } = context();
+  await handler.handle(ctx);
+  assert.equal(calls.claim.length, 0);
+  assert.equal(calls.questions.length, 0);
+  assert.deepEqual(replies, [["Пока недостаточно материала для полезного разбора. Добавьте, пожалуйста, немного деталей:\n\nWhy do you like it?"]]);
 });
 
 test("manual readiness failure preserves open conversation and offers retry", async () => {

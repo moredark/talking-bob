@@ -35,7 +35,7 @@ const RUNTIME_SETTINGS_BASE = [
   integer("RETENTION_ERROR_LOGS_DAYS", "product", "Error-log retention", 30, 1, 3650),
   integer("RETENTION_RATE_LIMIT_DAYS", "product", "Rate-limit retention", 30, 1, 3650),
   integer("RETENTION_CLOSED_CONVERSATION_CONTENT_DAYS", "product", "Closed session content retention", 30, 1, 3650),
-  { key: "LLM_MODEL", group: "infrastructure", description: "LLM provider model", type: "string", defaultValue: "zai-org/GLM-4.7", applyMode: "restart" },
+  { key: "LLM_MODEL", group: "infrastructure", description: "LLM provider model", type: "string", defaultValue: "Qwen/Qwen3.6-35B-A3B", applyMode: "restart" },
   integer("TELEGRAM_UPDATE_CONCURRENCY", "infrastructure", "Telegram update concurrency", RUNTIME_CONCURRENCY_LIMITS.telegramUpdates, 1, 100),
   integer("AI_REQUEST_CONCURRENCY", "infrastructure", "AI request concurrency", RUNTIME_CONCURRENCY_LIMITS.aiRequests, 1, 50),
   integer("AI_REQUEST_MAX_PENDING", "infrastructure", "AI pending queue bound", RUNTIME_CONCURRENCY_LIMITS.aiRequestMaxPending, 0, 1000),
