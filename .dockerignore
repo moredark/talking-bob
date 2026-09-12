@@ -13,3 +13,7 @@ integration
 scripts
 *.md
 npm-debug.log*
+
+# Local agent workflows and specifications
+.agents
+openspec

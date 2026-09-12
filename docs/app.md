@@ -98,9 +98,8 @@ not have a durable retry claim; this change does not introduce automatic retries
 message if the same readiness check passes; otherwise it asks for more detail
 or repeats the unanswered question without closing the conversation. With no
 accepted user messages it is rejected. Report generation is
-claimed in the database. A generated report is persisted and never regenerated
-on later `/report` commands: later commands create an idempotent delivery
-request and resend the saved result. A failed generation can be reclaimed only
+claimed in the database. Delivery of an already generated report follows the
+[report-delivery contract](../openspec/specs/report-delivery/spec.md). A failed generation can be reclaimed only
 by a new request key. Expired leases are reclaimable, while concurrent active
 work returns a busy response.
 
@@ -118,11 +117,8 @@ failure with `/report` retry guidance; it never saves a fallback as a completed 
 
 The readiness system prompt is stored as `agent_prompt_rules.readinessPrompt` beside the shared follow-up and analysis prompts. It is loaded in the same personality snapshot and can be edited under **Common rules** in the admin UI; the application code only builds the conversation evidence payload and validates the configured JSON response.
 
-Reports are formatted as literal plain text and split into Telegram-safe
-chunks of at most 4096 UTF-16 code units. Only the final chunk carries the
-**New question** keyboard. Definite delivery rejection marks that delivery
-request failed; an ambiguous delivery remains pending and requires a new
-`/report` command to attempt delivery of the same persisted report.
+Report formatting, chunk delivery, and definite/ambiguous delivery failures
+are specified in the [report-delivery contract](../openspec/specs/report-delivery/spec.md).
 
 ## Streak and reminders (implemented)
 
@@ -266,7 +262,8 @@ prompt-delivery provenance. Retention-safe admin analytics preserves only
 non-sensitive activity-day, first-message, score, and report-delivery
 timestamps; these facts contain no transcript, message, provider response, or
 recipient identity.
-`/report` gives an explicit message when saved report content has been purged.
+The [report-delivery contract](../openspec/specs/report-delivery/spec.md)
+defines the `/report` response when saved content has been purged.
 
 Expired request-audit rows, orphaned expired quota windows, and sanitized error
 logs have independent retention periods. Active quota windows are not removed.

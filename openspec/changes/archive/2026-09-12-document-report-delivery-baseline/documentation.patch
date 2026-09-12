@@ -1,0 +1,94 @@
+diff --git a/docs/app.md b/docs/app.md
+--- a/docs/app.md
++++ b/docs/app.md
+@@ -98,9 +98,8 @@
+ message if the same readiness check passes; otherwise it asks for more detail
+ or repeats the unanswered question without closing the conversation. With no
+ accepted user messages it is rejected. Report generation is
+-claimed in the database. A generated report is persisted and never regenerated
+-on later `/report` commands: later commands create an idempotent delivery
+-request and resend the saved result. A failed generation can be reclaimed only
++claimed in the database. Delivery of an already generated report follows the
++[report-delivery contract](../openspec/specs/report-delivery/spec.md). A failed generation can be reclaimed only
+ by a new request key. Expired leases are reclaimable, while concurrent active
+ work returns a busy response.
+ 
+@@ -118,11 +117,8 @@
+ 
+ The readiness system prompt is stored as `agent_prompt_rules.readinessPrompt` beside the shared follow-up and analysis prompts. It is loaded in the same personality snapshot and can be edited under **Common rules** in the admin UI; the application code only builds the conversation evidence payload and validates the configured JSON response.
+ 
+-Reports are formatted as literal plain text and split into Telegram-safe
+-chunks of at most 4096 UTF-16 code units. Only the final chunk carries the
+-**New question** keyboard. Definite delivery rejection marks that delivery
+-request failed; an ambiguous delivery remains pending and requires a new
+-`/report` command to attempt delivery of the same persisted report.
++Report formatting, chunk delivery, and definite/ambiguous delivery failures
++are specified in the [report-delivery contract](../openspec/specs/report-delivery/spec.md).
+ 
+ ## Streak and reminders (implemented)
+ 
+@@ -266,7 +262,8 @@
+ non-sensitive activity-day, first-message, score, and report-delivery
+ timestamps; these facts contain no transcript, message, provider response, or
+ recipient identity.
+-`/report` gives an explicit message when saved report content has been purged.
++The [report-delivery contract](../openspec/specs/report-delivery/spec.md)
++defines the `/report` response when saved content has been purged.
+ 
+ Expired request-audit rows, orphaned expired quota windows, and sanitized error
+ logs have independent retention periods. Active quota windows are not removed.
+diff --git a/docs/architecture/README.md b/docs/architecture/README.md
+--- a/docs/architecture/README.md
++++ b/docs/architecture/README.md
+@@ -43,7 +43,8 @@
+ 
+ | Что нужно узнать | Нормативный источник |
+ | --- | --- |
+-| Команды, лимиты, сообщения, env и пользовательское поведение | [Application contract](../app.md) |
++| Команды, лимиты, сообщения, env и поведение вне перенесённых OpenSpec-контрактов | [Application contract](../app.md) |
++| Доставка сохранённого отчёта: повторы, части, ошибки и недоступность после retention | [OpenSpec report-delivery](../../openspec/specs/report-delivery/spec.md) |
+ | Поля, enum, индексы, SQL-инварианты и миграции | [Database contract](../database.md) и `prisma/schema.prisma` |
+ | Deploy, backup, restore, monitoring | [Operations runbook](../operations.md) |
+ | Будущая production-схема с proxy/admin hosting | [Deployment plan](../DEPLOYMENT_PLAN.md), помеченный как forward-looking |
+diff --git a/AGENTS.md b/AGENTS.md
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -5,7 +5,8 @@
+ ## Source of truth
+ 
+ - Start with [the architecture index](docs/architecture/README.md) for system boundaries and module ownership.
+-- Treat [the application contract](docs/app.md), [the database contract](docs/database.md), and `prisma/schema.prisma` as normative for behavior, data, and persistence.
++- Treat [the application contract](docs/app.md) as normative for behavior not transferred to OpenSpec; [the database contract](docs/database.md) and `prisma/schema.prisma` remain normative for data and persistence.
++- Use [report-delivery](openspec/specs/report-delivery/spec.md) as the normative contract for persisted report delivery, retries, chunking, and unavailable purged reports.
+ - Use [the SDD workflow](docs/sdd-workflow.md) for OpenSpec changes; existing contracts remain canonical until a capability is deliberately transferred into a maintained specification.
+ 
+ ## Project Overview
+diff --git a/docs/sdd-workflow.md b/docs/sdd-workflow.md
+--- a/docs/sdd-workflow.md
++++ b/docs/sdd-workflow.md
+@@ -1,9 +1,9 @@
+ # Работа с OpenSpec в Talking Bob
+ 
+ OpenSpec подключён для локальной работы с Codex: CLI **1.13.0**, профиль **core**,
+-схема **spec-driven**. На этом этапе подключены инструменты и правила;
+-поведенческие specs и changes пока пусты. Первое учебное описание `/report`
+-ведётся отдельной задачей.
++схема **spec-driven**. Первый перенесённый контракт —
++[доставка сохранённого отчёта](../openspec/specs/report-delivery/spec.md).
++Следующий этап — полный цикл первого продуктового изменения.
+ 
+ ## Установка и повторная настройка
+ 
+@@ -96,9 +96,9 @@
+ openspec validate --all --strict --no-interactive
+ ```
+ 
+-Пустой список specs/changes сейчас ожидаем: успешный `validate` с нулём элементов
+-не проверяет поведение приложения. После появления specs сверяй количество
+-и содержимое найденных элементов. CLI проверяет структуру документов; смысл
++В списке specs ожидается как минимум `report-delivery`; список активных changes
++зависит от текущей работы и архивирования. Успешный `validate` с нулём элементов
++не проверяет поведение приложения: сверяй количество и содержимое найденных элементов. CLI проверяет структуру документов; смысл
+ подтверждают тесты и review. Правильность YAML/context дополнительно проверяется
+ через `openspec instructions <artifact> --change <name> --json` в реальном change.
+ 

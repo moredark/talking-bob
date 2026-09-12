@@ -91,6 +91,7 @@ The bot uses the standard Telegram Bot API through grammY. Built-in questions ar
 
 ## Documentation
 
+- [OpenSpec workflow and setup](docs/sdd-workflow.md)
 - [Architecture guide and recommended reader order](docs/architecture/README.md)
 - [Application behavior and runtime contracts](docs/app.md)
 - [Database schema and invariants](docs/database.md)

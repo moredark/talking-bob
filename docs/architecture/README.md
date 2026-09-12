@@ -43,7 +43,8 @@ Prisma-схему или operational runbook.
 
 | Что нужно узнать | Нормативный источник |
 | --- | --- |
-| Команды, лимиты, сообщения, env и пользовательское поведение | [Application contract](../app.md) |
+| Команды, лимиты, сообщения, env и поведение вне перенесённых OpenSpec-контрактов | [Application contract](../app.md) |
+| Доставка сохранённого отчёта: повторы, части, ошибки и недоступность после retention | [OpenSpec report-delivery](../../openspec/specs/report-delivery/spec.md) |
 | Поля, enum, индексы, SQL-инварианты и миграции | [Database contract](../database.md) и `prisma/schema.prisma` |
 | Deploy, backup, restore, monitoring | [Operations runbook](../operations.md) |
 | Будущая production-схема с proxy/admin hosting | [Deployment plan](../DEPLOYMENT_PLAN.md), помеченный как forward-looking |
