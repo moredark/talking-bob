@@ -13,3 +13,11 @@ export {
   resolveWallClock,
   validateScheduleTime,
 } from "./timezone";
+
+export {
+  ALL_WEEKDAYS_MASK,
+  nextWeeklySlotAtOrAfter,
+  nextWeeklySlotStrictlyAfter,
+  validatePromptWeekdaysMask,
+  weeklySlotOnDate,
+} from "./weekday-schedule";

@@ -29,14 +29,12 @@ See [SpeechKit setup](speechkit.md).
   reservation, and delivery flow without the welcome message.
 - `/report` generates or resends the report for the latest question. At least
   one accepted voice reply is required.
-- `/settings` can enable or disable the daily question, choose one of the fixed
-  times (`09:00`, `12:00`, `13:00`, `15:00`, `18:00`, `21:00`), and select a
-  friendly or playful agent tone. There is currently no Telegram timezone
-  picker.
-
-A new user starts with the daily question enabled at `13:00` in
-`Europe/Moscow`. The persisted effective timezone is used when displaying and
-calculating the schedule.
+- `/settings` provides access to the practice schedule, announcement consent,
+  streak reminders, and agent personality. There is no Telegram timezone picker.
+- Practice commands, weekday selection, time changes, and manual mode follow
+  [practice-scheduling](../openspec/specs/practice-scheduling/spec.md).
+  Guidance shown after choosing a sparse schedule follows
+  [streak-schedule-guidance](../openspec/specs/streak-schedule-guidance/spec.md).
 
 ## Prompt selection and delivery
 
@@ -172,26 +170,15 @@ separate `/streak` command in this scope.
 
 ## Time and scheduling contract
 
-- A user's effective timezone is a canonical IANA name. Aliases are normalized;
-  blank or invalid legacy values fall back to `Europe/Moscow`.
+- Effective timezones are canonical IANA names; blank or invalid legacy values
+  fall back to `Europe/Moscow`.
 - Business moments are UTC instants stored as PostgreSQL `timestamptz(3)`.
-  `scheduledLocalDate` separately stores the effective local calendar date.
-  Correctness does not depend on the Node process or database-session `TZ`, so
-  there is no required `TZ` environment variable.
-- A due occurrence includes the exact target minute. In a DST spring gap, the
-  occurrence moves to the first valid local minute. In an autumn overlap, the
-  earlier (first) occurrence is selected.
-- The minute scheduler repairs legacy schedule state without delivering during
-  startup normalization. After downtime it claims only the latest overdue
-  occurrence, then advances `nextPromptAt` strictly beyond the current time;
-  it does not replay every missed day.
-- A scheduled occurrence has the immutable identity
-  `scheduled:<userId>:YYYY-MM-DD`, plus immutable local-date and instant
-  snapshots after claim. Database row locks, `SKIP LOCKED`, and uniqueness of
-  that identity make concurrent workers safe.
-- Enabling or changing a schedule recalculates only a future, unclaimed
-  occurrence. Already claimed occurrences keep their original identity and
-  snapshots.
+  Correctness does not depend on the process or database-session `TZ`.
+- The maintained [practice-scheduling specification](../openspec/specs/practice-scheduling/spec.md)
+  owns question schedule calculation, same-day recovery, immutable occurrence
+  identity, and changes to future unclaimed slots.
+- Ordinary administrative broadcasts and their optional activity/delivery
+  filters follow [schedule-reengagement](../openspec/specs/schedule-reengagement/spec.md).
 
 ## Quotas
 

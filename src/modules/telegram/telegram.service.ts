@@ -27,6 +27,7 @@ import { StreakReminderDispatcher } from "../streak";
 import { ErrorLogService, ObservabilityContextService } from "../error-log";
 import { ReportHandler } from "./handlers/report.handler";
 import { SettingsHandler } from "./handlers/settings.handler";
+import { ScheduleHandler } from "./handlers/schedule.handler";
 import { StartHandler } from "./handlers/start.handler";
 import { VoiceHandler } from "./handlers/voice.handler";
 
@@ -75,6 +76,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     private readonly errorLog?: ErrorLogService,
     private readonly observability?: ObservabilityContextService,
     @Optional() private readonly broadcastDispatcher?: BroadcastDispatcher,
+    @Optional() private readonly scheduleHandler?: ScheduleHandler,
   ) {
     this.bot = new Bot(runtimeConfig.telegramBotToken, {
       client: {
@@ -95,8 +97,11 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     this.dailyPromptDispatcher.setBot(this.bot);
     this.streakReminderDispatcher.setBot(this.bot);
     this.broadcastDispatcher?.setSender({
-      sendPlainText: async (telegramId, content, signal) => {
-        await this.bot.api.sendMessage(telegramId.toString(), content, undefined, signal);
+      sendPlainText: async (telegramId, content, signal, options) => {
+        const replyMarkup = options?.messageAction === "open_schedule"
+          ? { inline_keyboard: [[{ text: "Настроить расписание", callback_data: "schedule_open" }]] }
+          : undefined;
+        await this.bot.api.sendMessage(telegramId.toString(), content, replyMarkup ? { reply_markup: replyMarkup } : undefined, signal);
       },
     });
     this.startRunner();
@@ -156,14 +161,53 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     });
     this.bot.use(sequentialize((ctx) => this.updateKey(ctx)));
 
+    this.bot.use((ctx, next) => {
+      const text = ctx.message && "text" in ctx.message ? ctx.message.text : "";
+      if ((text ?? "").startsWith("/") || (ctx.callbackQuery?.data && !ctx.callbackQuery.data.startsWith("schedule_time_"))) {
+        this.scheduleHandler?.cancelTimeInput(ctx);
+      }
+      return next();
+    });
+
     this.bot.command("start", (ctx) => this.startHandler.handle(ctx));
     this.bot.command("report", (ctx) => this.reportHandler.handle(ctx));
     this.bot.command("settings", (ctx) => this.settingsHandler.handle(ctx));
+    if (this.scheduleHandler) {
+      this.bot.command("schedule", (ctx) => this.scheduleHandler!.handle(ctx));
+      this.bot.command("time", (ctx) => this.scheduleHandler!.handleTime(ctx));
+    }
+    if (this.scheduleHandler) {
+      this.bot.on("message:text", async (ctx, next) => {
+        if (!(await this.scheduleHandler!.handleTimeText(ctx))) await next();
+      });
+    }
     this.bot.on("message:voice", (ctx) => this.voiceHandler.handle(ctx));
 
     this.bot.callbackQuery("report", (ctx) => this.reportHandler.handle(ctx));
     this.bot.callbackQuery("new_question", (ctx) =>
       this.startHandler.handleNewQuestion(ctx),
+    );
+    if (this.scheduleHandler) {
+      this.bot.callbackQuery("schedule_time_open", (ctx) => this.scheduleHandler!.openTimePicker(ctx));
+      this.bot.callbackQuery(/^schedule_time_v1_\d+_\d+$/, (ctx) => this.scheduleHandler!.handleTimeSelect(ctx, ctx.callbackQuery.data));
+      this.bot.callbackQuery("schedule_open", (ctx) => this.scheduleHandler!.handle(ctx));
+    this.bot.callbackQuery(/^schedule_days_v1_\d+$/, (ctx) =>
+      this.scheduleHandler!.handleDays(ctx, ctx.callbackQuery.data),
+    );
+    this.bot.callbackQuery(/^schedule_day_v1_\d+_\d+$/, (ctx) =>
+      this.scheduleHandler!.handleDayToggle(ctx, ctx.callbackQuery.data),
+    );
+    this.bot.callbackQuery(/^schedule_save_v1_\d+$/, (ctx) =>
+      this.scheduleHandler!.handleSaveDays(ctx, ctx.callbackQuery.data),
+    );
+    this.bot.callbackQuery("schedule_cancel_v1", (ctx) => this.scheduleHandler!.handleCancel(ctx));
+    this.bot.callbackQuery("schedule_manual_v1", (ctx) => this.scheduleHandler!.handleManual(ctx));
+    this.bot.callbackQuery("schedule_enable_v1", (ctx) => this.scheduleHandler!.handleEnable(ctx));
+    this.bot.callbackQuery("schedule_reminder_v1_on", (ctx) => this.scheduleHandler!.handleReminderChoice(ctx, true));
+    this.bot.callbackQuery("schedule_reminder_v1_off", (ctx) => this.scheduleHandler!.handleReminderChoice(ctx, false));
+    }
+    this.bot.callbackQuery(/^schedule_/, (ctx) =>
+      ctx.reply("Эта кнопка устарела. Откройте /schedule и выберите действие ещё раз."),
     );
     this.bot.callbackQuery("toggle_daily", (ctx) =>
       this.settingsHandler.handleToggle(ctx),
@@ -290,7 +334,9 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     await this.bot.api.setMyCommands([
       { command: "start", description: "Начать / Новый вопрос" },
       { command: "report", description: "Получить отчёт по разговору" },
-      { command: "settings", description: "Настройки ежедневного вопроса" },
+      { command: "settings", description: "Настройки" },
+      { command: "schedule", description: "Расписание занятий" },
+      { command: "time", description: "Изменить время вопросов" },
     ]);
     if (this.shuttingDown) return;
 

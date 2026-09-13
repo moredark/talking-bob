@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database";
 import { PaginatedResult, UpdateUserDto, UserDetail, UserListItem } from "./admin.contracts";
 import { AdminAuditService } from "./admin-audit.service";
+import { nextWeeklySlotAtOrAfter } from "../../shared/time";
 import { averageScore } from "./admin-service.utils";
 
 type UserClient = Pick<Prisma.TransactionClient, "user">;
@@ -52,13 +53,20 @@ export class AdminUsersService {
     if (!current) return null;
     if (!this.hasUserUpdateChanges(current, dto)) return this.getUserById(id);
     return this.audit.runSuccess({ action: "user.update", entityType: "user" }, async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "users" WHERE "id" = ${id} FOR UPDATE`);
       const before = await tx.user.findUniqueOrThrow({ where: { id } });
       if (!this.hasUserUpdateChanges(before, dto)) {
         const result = await this.getUserByIdFrom(tx, id);
         if (!result) throw new Error("User disappeared");
         return { result, entityId: id, skipAudit: true };
       }
-      await tx.user.update({ where: { id }, data: this.userUpdateData(dto) });
+      const data = this.userUpdateData(dto);
+      if (dto.dailyPromptEnabled !== undefined && dto.dailyPromptEnabled !== before.dailyPromptEnabled) {
+        data.nextPromptAt = dto.dailyPromptEnabled
+          ? nextWeeklySlotAtOrAfter(new Date(), before.dailyPromptHour, before.dailyPromptMinute, before.timezone, before.promptWeekdaysMask).instant
+          : null;
+      }
+      await tx.user.update({ where: { id }, data });
       const result = await this.getUserByIdFrom(tx, id);
       if (!result) throw new Error("Updated user disappeared");
       const snapshots = this.changedUserUpdateSnapshots(before, result, dto);

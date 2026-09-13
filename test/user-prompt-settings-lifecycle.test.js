@@ -42,6 +42,7 @@ test("new user persists an enabled default schedule with its initial slot atomic
     assert.equal(createData.dailyPromptEnabled, true);
     assert.equal(createData.dailyPromptHour, 13);
     assert.equal(createData.dailyPromptMinute, 0);
+    assert.equal(createData.promptWeekdaysMask, 127);
     assert.equal(createData.timezone, DEFAULT_USER_TIMEZONE);
     assert.equal(
       createData.nextPromptAt.toISOString(),

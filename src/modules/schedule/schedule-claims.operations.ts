@@ -8,8 +8,9 @@ import {
 } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database";
 import {
-  latestSlotAtOrBefore,
-  nextSlotStrictlyAfter,
+  weeklySlotOnDate,
+  getLocalDateParts,
+  nextWeeklySlotStrictlyAfter,
   resolveEffectiveTimeZone,
 } from "../../shared/time";
 import { DeliveryClaim } from "./message-dispatcher.interface";
@@ -28,6 +29,7 @@ interface DueUserRow {
   timezone: string;
   dailyPromptHour: number;
   dailyPromptMinute: number;
+  promptWeekdaysMask: number;
   telegramId: bigint;
 }
 
@@ -77,7 +79,6 @@ export class ScheduleClaimsOperations {
           audioFileId: true,
         },
       });
-      if (prompts.length === 0) return claims;
 
       const dueUsers = await tx.$queryRaw<DueUserRow[]>(Prisma.sql`
         SELECT
@@ -85,7 +86,8 @@ export class ScheduleClaimsOperations {
           "telegramId",
           "timezone",
           "dailyPromptHour",
-          "dailyPromptMinute"
+          "dailyPromptMinute",
+          "promptWeekdaysMask"
         FROM "users"
         WHERE "dailyPromptEnabled" = true
           AND "nextPromptAt" <= ${now}
@@ -106,18 +108,30 @@ export class ScheduleClaimsOperations {
           ? user.dailyPromptMinute
           : DEFAULT_PROMPT_MINUTE;
         const timezone = resolveEffectiveTimeZone(user.timezone).timeZone;
-        const occurrence = latestSlotAtOrBefore(
-          now,
+        const occurrence = weeklySlotOnDate(
+          getLocalDateParts(now, timezone),
           hour,
           minute,
           timezone,
+          user.promptWeekdaysMask,
         );
-        const nextPromptAt = nextSlotStrictlyAfter(
+        const nextPromptAt = nextWeeklySlotStrictlyAfter(
           now,
           hour,
           minute,
           timezone,
+          user.promptWeekdaysMask,
         ).instant;
+        await tx.user.update({
+          where: { id: user.id },
+          data: {
+            dailyPromptHour: hour,
+            dailyPromptMinute: minute,
+            timezone,
+            nextPromptAt,
+          },
+        });
+        if (!occurrence || occurrence.instant > now) continue;
         const occurrenceKey = `scheduled:${user.id}:${occurrence.localDate}`;
         const prompt = this.selectPrompt(
           prompts,
@@ -162,15 +176,7 @@ export class ScheduleClaimsOperations {
           RETURNING "id"
         `);
 
-        await tx.user.update({
-          where: { id: user.id },
-          data: {
-            dailyPromptHour: hour,
-            dailyPromptMinute: minute,
-            timezone,
-            nextPromptAt,
-          },
-        });
+
 
         if (inserted[0]) {
           claims.push({

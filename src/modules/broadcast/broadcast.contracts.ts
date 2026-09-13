@@ -11,16 +11,21 @@ export const BROADCAST_RECIPIENT_STATUSES: readonly BroadcastRecipientStatus[] =
 ];
 
 export type BroadcastActivity = (typeof BROADCAST_ACTIVITIES)[number];
+export type BroadcastMessageAction = "open_schedule";
+export interface BroadcastMessageOptions { messageAction?: BroadcastMessageAction | null; }
 
 export interface BroadcastFilters {
   languageLevels: string[];
   activity: BroadcastActivity;
   dailyPromptEnabled: "any" | boolean;
+  noVoiceForDays?: number;
+  scheduledDeliveryWithinDays?: number;
 }
 
 export interface BroadcastInputDto {
   content: string;
   filters: BroadcastFilters;
+  messageAction?: BroadcastMessageAction | null;
   mode: BroadcastMode;
   scheduledFor: string | null;
   scheduledAt: Date;
@@ -30,11 +35,13 @@ export interface BroadcastPreview {
   normalized: {
     content: string;
     filters: BroadcastFilters;
+    messageAction: BroadcastMessageAction | null;
     mode: BroadcastMode;
     scheduledFor: string | null;
     scheduledAt: Date;
   };
   audienceCount: number;
+  evaluatedAt: Date;
 }
 
 export interface BroadcastCounts {
@@ -65,6 +72,7 @@ export interface BroadcastListItem {
   content: string | null;
   contentPurged: boolean;
   filters: BroadcastFilters;
+  messageAction: BroadcastMessageAction | null;
   mode: BroadcastMode;
   scheduledFor: string | null;
   scheduledAt: Date;
@@ -74,6 +82,7 @@ export interface BroadcastListItem {
   createdAt: Date;
   updatedAt: Date;
   terminalAt: Date | null;
+  evaluatedAt: Date;
 }
 
 export interface BroadcastRecipientItem {
@@ -117,7 +126,7 @@ export interface BroadcastSendError {
 }
 
 export interface BroadcastSender {
-  sendPlainText(telegramId: bigint, content: string, signal?: AbortSignal): Promise<void>;
+  sendPlainText(telegramId: bigint, content: string, signal?: AbortSignal, options?: BroadcastMessageOptions): Promise<void>;
 }
 
 export const BROADCAST_LIMITS = {

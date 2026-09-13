@@ -25,6 +25,21 @@ export function broadcastSnapshotInsert(
     conditions.push(Prisma.sql`app_user."lastUserMessageAt" >= ${cutoff}`);
     conditions.push(Prisma.sql`app_user."lastUserMessageAt" < ${now}`);
   }
+  if (filters.noVoiceForDays !== undefined) {
+    const cutoff = new Date(now.getTime() - filters.noVoiceForDays * 24 * 60 * 60 * 1000);
+    conditions.push(Prisma.sql`(app_user."lastUserMessageAt" IS NULL OR app_user."lastUserMessageAt" < ${cutoff})`);
+  }
+  if (filters.scheduledDeliveryWithinDays !== undefined) {
+    const cutoff = new Date(now.getTime() - filters.scheduledDeliveryWithinDays * 24 * 60 * 60 * 1000);
+    conditions.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "user_prompts" scheduled_prompt
+      WHERE scheduled_prompt."userId" = app_user."id"
+        AND scheduled_prompt."source" = 'scheduled'::"UserPromptSource"
+        AND scheduled_prompt."deliveryStatus" = 'sent'::"UserPromptDeliveryStatus"
+        AND scheduled_prompt."sentAt" >= ${cutoff}
+        AND scheduled_prompt."sentAt" <= ${now}
+    )`);
+  }
   return Prisma.sql`
     INSERT INTO "broadcast_recipients" (
       "id", "broadcastId", "userId", "telegramIdSnapshot", "usernameSnapshot",

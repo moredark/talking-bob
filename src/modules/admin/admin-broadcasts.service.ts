@@ -14,6 +14,7 @@ import {
   broadcastAudienceWhere,
   broadcastSnapshotInsert,
   normalizeBroadcastFilters,
+  normalizeBroadcastMessageAction,
 } from "../broadcast";
 import { AdminAuditContextService } from "./admin-audit-context.service";
 import { AdminAuditService } from "./admin-audit.service";
@@ -32,7 +33,7 @@ export class AdminBroadcastsService {
     const audienceCount = await this.prisma.user.count({
       where: broadcastAudienceWhere(input.filters, now),
     });
-    return { normalized: this.normalized(input), audienceCount };
+    return { normalized: this.normalized(input), audienceCount, evaluatedAt: now };
   }
 
   async create(input: BroadcastInputDto, now = new Date()): Promise<BroadcastDetail> {
@@ -43,6 +44,8 @@ export class AdminBroadcastsService {
         const broadcast = await tx.broadcast.create({
           data: {
             content: input.content,
+            messageAction: normalizeBroadcastMessageAction(input.messageAction),
+            createdAt: now,
             filters: input.filters as unknown as Prisma.InputJsonObject,
             mode: input.mode,
             scheduledForLocal: input.scheduledFor,
@@ -185,6 +188,7 @@ export class AdminBroadcastsService {
   private normalized(input: BroadcastInputDto): BroadcastPreview["normalized"] {
     return {
       content: input.content,
+      messageAction: normalizeBroadcastMessageAction(input.messageAction),
       filters: input.filters,
       mode: input.mode,
       scheduledFor: input.scheduledFor,
@@ -196,6 +200,8 @@ export class AdminBroadcastsService {
     return {
       id: row.id,
       content: row.content,
+      messageAction: normalizeBroadcastMessageAction(row.messageAction),
+      evaluatedAt: row.createdAt,
       contentPurged: row.contentPurgedAt !== null,
       filters: normalizeBroadcastFilters(row.filters),
       mode: row.mode,
@@ -250,6 +256,8 @@ export class AdminBroadcastsService {
       mode: row.mode,
       scheduledAt: row.scheduledAt,
       filters,
+      messageAction: normalizeBroadcastMessageAction(row.messageAction),
+      evaluatedAt: row.createdAt,
       audienceCount,
       status: row.status,
     };

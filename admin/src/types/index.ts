@@ -377,12 +377,15 @@ export type BroadcastRecipientStatus =
   | "skipped";
 export type BroadcastActivity = "any" | "7d" | "30d" | "90d" | "never";
 export type BroadcastDailyPromptFilter = "any" | true | false;
+export type BroadcastMessageAction = "open_schedule";
 export type LanguageLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2";
 
 export interface BroadcastFilters {
   languageLevels: LanguageLevel[];
   activity: BroadcastActivity;
   dailyPromptEnabled: BroadcastDailyPromptFilter;
+  noVoiceForDays?: number | null;
+  scheduledDeliveryWithinDays?: number | null;
 }
 
 export interface CreateBroadcastDto {
@@ -390,6 +393,7 @@ export interface CreateBroadcastDto {
   filters: BroadcastFilters;
   mode: BroadcastMode;
   scheduledFor?: string | null;
+  messageAction?: BroadcastMessageAction | null;
 }
 
 export interface BroadcastPreview {
@@ -399,8 +403,10 @@ export interface BroadcastPreview {
     mode: BroadcastMode;
     scheduledFor: string | null;
     scheduledAt: string;
+    messageAction: BroadcastMessageAction | null;
   };
   audienceCount: number;
+  evaluatedAt: string;
 }
 
 export interface BroadcastCounts {
@@ -421,6 +427,8 @@ export interface BroadcastListItem {
   status: BroadcastStatus;
   scheduledFor: string | null;
   scheduledAt: string;
+  messageAction: BroadcastMessageAction | null;
+  evaluatedAt: string;
   counts: BroadcastCounts;
   createdBy: { id: string; username: string };
   createdAt: string;

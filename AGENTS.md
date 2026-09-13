@@ -7,6 +7,7 @@ This file provides guidance to coding agents working in this repository.
 - Start with [the architecture index](docs/architecture/README.md) for system boundaries and module ownership.
 - Treat [the application contract](docs/app.md) as normative for behavior not transferred to OpenSpec; [the database contract](docs/database.md) and `prisma/schema.prisma` remain normative for data and persistence.
 - Use [report-delivery](openspec/specs/report-delivery/spec.md) as the normative contract for persisted report delivery, retries, chunking, and unavailable purged reports.
+- Use [practice-scheduling](openspec/specs/practice-scheduling/spec.md), [schedule-reengagement](openspec/specs/schedule-reengagement/spec.md), and [streak-schedule-guidance](openspec/specs/streak-schedule-guidance/spec.md) for the transferred scheduling and broadcast behavior. Streak qualification remains in `docs/app.md`.
 - Use [the SDD workflow](docs/sdd-workflow.md) for OpenSpec changes; existing contracts remain canonical until a capability is deliberately transferred into a maintained specification.
 
 ## Project Overview

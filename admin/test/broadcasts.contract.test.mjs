@@ -44,6 +44,19 @@ test("broadcast creation invalidates previews and enforces UTF-16, Moscow and co
   assert.match(page, /role="alert"/);
   assert.match(page, /:model-value="form\.mode"[\s\S]*@update:model-value="updateMode"/);
   assert.match(page, /function updateMode\(value: unknown\)[\s\S]*value === "immediate"[\s\S]*value === "scheduled"/);
+  assert.match(page, /noVoiceForDays/);
+  assert.match(page, /scheduledDeliveryWithinDays/);
+  assert.match(page, /type="number" min="1" max="365" step="1"/);
+  assert.match(page, /function inputText\(value: unknown\): string/);
+  assert.match(page, /Number\(inputText\(form\.noVoiceForDays\)\)/);
+  assert.match(page, /Number\(inputText\(form\.scheduledDeliveryWithinDays\)\)/);
+  assert.match(page, /Вопросы по расписанию/);
+  assert.match(page, /messageAction/);
+  assert.match(page, /value="open_schedule"/);
+  assert.match(page, /Настроить расписание/);
+  assert.match(page, /broadcastFilterSummary/);
+  assert.match(page, /normalized\.content/);
+  assert.match(page, /preview\.evaluatedAt/);
 });
 
 test("broadcast list and detail preserve stale protection, server pagination, cancel conflict and purged states", () => {

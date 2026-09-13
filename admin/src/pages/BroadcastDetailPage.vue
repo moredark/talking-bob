@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { broadcastFilterSummary, broadcastActionLabel } from "../lib/broadcast-summary";
 import { computed, onMounted, ref, watch } from "vue";
 import { isAxiosError } from "axios";
 import { ArrowLeft, Ban, Megaphone, RefreshCw, UserRound } from "@lucide/vue";
@@ -112,8 +113,7 @@ function formatDate(value: string | null, timeZone = "Europe/Moscow") {
 
 function filterDescription() {
   if (!broadcast.value) return "";
-  const levels = broadcast.value.filters.languageLevels.length ? broadcast.value.filters.languageLevels.join(", ") : "все уровни";
-  return `${levels} · активность: ${broadcast.value.filters.activity} · daily: ${String(broadcast.value.filters.dailyPromptEnabled)}`;
+  return broadcastFilterSummary(broadcast.value.filters);
 }
 
 onMounted(() => load(1));
@@ -149,6 +149,8 @@ watch(id, () => {
           </div>
           <div class="grid gap-4 md:grid-cols-2"><div><p class="text-sm text-muted-foreground">Москва</p><p>{{ broadcast.mode === 'immediate' ? 'Сразу' : broadcast.scheduledFor }}</p></div><div><p class="text-sm text-muted-foreground">UTC instant</p><p>{{ formatDate(broadcast.scheduledAt, 'UTC') }}</p></div></div>
           <div><p class="text-sm text-muted-foreground">Фильтры снимка</p><p>{{ filterDescription() }}</p></div>
+          <div><p class="text-sm text-muted-foreground">Кнопка сообщения</p><p>{{ broadcastActionLabel(broadcast.messageAction) }}</p></div>
+          <div><p class="text-sm text-muted-foreground">Аудитория рассчитана</p><p>{{ formatDate(broadcast.evaluatedAt ?? broadcast.createdAt) }}</p></div>
         </CardContent>
         <CardFooter v-if="broadcast.status === 'queued'" class="justify-end"><Button variant="destructive" :disabled="cancelling" @click="cancelOpen = true"><Ban data-icon="inline-start" />Отменить рассылку</Button></CardFooter>
       </Card>

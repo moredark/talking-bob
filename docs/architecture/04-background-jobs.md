@@ -12,7 +12,13 @@ delivery lifecycle. `SchedulerService` — минутный cron-orchestrator.
 используется как scheduled flow, так и `/start`.
 
 При старте `ScheduleService.onModuleInit` нормализует legacy/inconsistent
-schedule state, но не рассылает пропущенные вопросы. В рабочем цикле cron:
+schedule state, но не рассылает пропущенные вопросы. Недельная маска учитывается
+при repair, настройке и claim. Новый claim относится только к сегодняшней
+выбранной локальной дате; пропущенные даты не догоняются. Курсор продвигается
+даже при пустом каталоге. Ранее сохранённые claims используют прежние правила
+reclaim и immutable snapshots.
+
+В рабочем цикле cron:
 
 ```mermaid
 sequenceDiagram
@@ -50,7 +56,9 @@ sequenceDiagram
 Бизнес-вычисления используют effective IANA timezone пользователя и Temporal,
 а persisted instants хранятся в UTC `timestamptz`. DST gap сдвигается к первой
 валидной минуте, overlap выбирает ранний instant. Process/DB `TZ` не участвует
-в бизнес-решении. Полный контракт находится в [app.md](../app.md) и
+в бизнес-решении. Полностью пропущенная локальная дата исключается из недельного
+расписания. Daily helpers стрика не изменяются. Контракты:
+[practice-scheduling](../../openspec/specs/practice-scheduling/spec.md) и
 [database.md](../database.md).
 
 ## Delivery outcome

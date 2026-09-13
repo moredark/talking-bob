@@ -5,6 +5,7 @@ import {
   VoiceHandler,
   ReportHandler,
   SettingsHandler,
+  ScheduleHandler,
 } from "./handlers";
 import { UserModule } from "../user";
 import { PromptModule } from "../prompt";
@@ -40,6 +41,7 @@ import { SpokenReplyService } from "./spoken-reply.service";
     SpokenReplyService,
     ReportWorkflowService,
     SettingsHandler,
+    ScheduleHandler,
   ],
   exports: [TelegramService],
 })

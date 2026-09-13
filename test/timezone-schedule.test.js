@@ -13,6 +13,12 @@ const {
   resolveWallClock,
   validateScheduleTime,
 } = require("../dist/shared/time/timezone");
+const {
+  nextWeeklySlotAtOrAfter,
+  nextWeeklySlotStrictlyAfter,
+  validatePromptWeekdaysMask,
+  weeklySlotOnDate,
+} = require("../dist/shared/time/weekday-schedule");
 
 function assertSlot(slot, expectedInstant, expectedLocalDate, expectedTimeZone) {
   assert.equal(slot.instant.toISOString(), expectedInstant);
@@ -170,4 +176,52 @@ test("time calculations produce identical UTC instants for different process TZ 
       end: "2024-11-04T05:00:00.000Z",
     },
   });
+});
+
+
+test("weekly helpers use ISO weekday bits and exact-boundary policies", () => {
+  const mondayAndFriday = (1 << 0) | (1 << 4);
+  assertSlot(
+    nextWeeklySlotAtOrAfter(new Date("2024-01-19T07:30:00.001Z"), 10, 30, "Europe/Moscow", mondayAndFriday),
+    "2024-01-22T07:30:00.000Z", "2024-01-22", "Europe/Moscow",
+  );
+  assertSlot(
+    nextWeeklySlotAtOrAfter(new Date("2024-01-19T07:30:00.000Z"), 10, 30, "Europe/Moscow", mondayAndFriday),
+    "2024-01-19T07:30:00.000Z", "2024-01-19", "Europe/Moscow",
+  );
+  assertSlot(
+    nextWeeklySlotStrictlyAfter(new Date("2024-01-19T07:30:00.000Z"), 10, 30, "Europe/Moscow", mondayAndFriday),
+    "2024-01-22T07:30:00.000Z", "2024-01-22", "Europe/Moscow",
+  );
+});
+
+test("weekly helpers return null for unselected and entirely skipped dates", () => {
+  assert.equal(weeklySlotOnDate({ year: 2024, month: 1, day: 16 }, 10, 30, "Europe/Moscow", 1 << 0), null);
+  // Samoa skipped 2011-12-30 entirely while moving across the date line.
+  assert.equal(weeklySlotOnDate({ year: 2011, month: 12, day: 30 }, 10, 30, "Pacific/Apia", 1 << 4), null);
+});
+
+test("weekly helpers preserve DST gap and overlap rules", () => {
+  const sunday = 1 << 6;
+  assertSlot(
+    weeklySlotOnDate({ year: 2024, month: 3, day: 10 }, 2, 30, "America/New_York", sunday),
+    "2024-03-10T07:00:00.000Z", "2024-03-10", "America/New_York",
+  );
+  assertSlot(
+    weeklySlotOnDate({ year: 2024, month: 11, day: 3 }, 1, 30, "America/New_York", sunday),
+    "2024-11-03T05:30:00.000Z", "2024-11-03", "America/New_York",
+  );
+});
+
+test("weekday mask validation rejects empty and out-of-range masks", () => {
+  for (const value of [0, -1, 128, 1.5, NaN]) assert.throws(() => validatePromptWeekdaysMask(value));
+  assert.doesNotThrow(() => validatePromptWeekdaysMask(127));
+});
+
+test("weekly schedule skips a late-day gap that resolves onto a different date", () => {
+  const { weeklySlotOnDate, nextWeeklySlotAtOrAfter } = require("../dist/shared/time");
+  assert.equal(weeklySlotOnDate({ year: 2009, month: 6, day: 19 }, 23, 30, "Asia/Dhaka", 16), null);
+  const next = nextWeeklySlotAtOrAfter(new Date("2009-06-19T16:30:00Z"), 23, 30, "Asia/Dhaka", 16);
+  assert.equal(next.localDate, "2009-06-26");
+  assert.equal(next.instant.toISOString(), "2009-06-26T16:30:00.000Z");
 });

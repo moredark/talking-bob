@@ -45,6 +45,9 @@ Prisma-схему или operational runbook.
 | --- | --- |
 | Команды, лимиты, сообщения, env и поведение вне перенесённых OpenSpec-контрактов | [Application contract](../app.md) |
 | Доставка сохранённого отчёта: повторы, части, ошибки и недоступность после retention | [OpenSpec report-delivery](../../openspec/specs/report-delivery/spec.md) |
+| Команды расписания, дни, время и восстановление вопросов | [OpenSpec practice-scheduling](../../openspec/specs/practice-scheduling/spec.md) |
+| Независимые фильтры обычной рассылки и optional кнопка | [OpenSpec schedule-reengagement](../../openspec/specs/schedule-reengagement/spec.md) |
+| Объяснение ежедневного стрика при редком расписании | [OpenSpec streak-schedule-guidance](../../openspec/specs/streak-schedule-guidance/spec.md); сам алгоритм — [Application contract](../app.md) |
 | Поля, enum, индексы, SQL-инварианты и миграции | [Database contract](../database.md) и `prisma/schema.prisma` |
 | Deploy, backup, restore, monitoring | [Operations runbook](../operations.md) |
 | Будущая production-схема с proxy/admin hosting | [Deployment plan](../DEPLOYMENT_PLAN.md), помеченный как forward-looking |

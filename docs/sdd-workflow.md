@@ -3,7 +3,10 @@
 OpenSpec подключён для локальной работы с Codex: CLI **1.13.0**, профиль **core**,
 схема **spec-driven**. Первый перенесённый контракт —
 [доставка сохранённого отчёта](../openspec/specs/report-delivery/spec.md).
-Следующий этап — полный цикл первого продуктового изменения.
+Также поддерживаются контракты [расписания](../openspec/specs/practice-scheduling/spec.md),
+[гибкой рассылки](../openspec/specs/schedule-reengagement/spec.md) и
+[объяснения стрика](../openspec/specs/streak-schedule-guidance/spec.md).
+Сам алгоритм стрика остаётся в `docs/app.md`.
 
 ## Установка и повторная настройка
 

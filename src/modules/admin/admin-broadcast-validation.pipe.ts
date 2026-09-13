@@ -8,6 +8,7 @@ import {
   BroadcastDetailQuery,
   BroadcastFilters,
   BroadcastInputDto,
+  BroadcastMessageAction,
   BroadcastListQuery,
 } from "../broadcast";
 import { ADMIN_LANGUAGE_LEVELS } from "./admin.contracts";
@@ -48,7 +49,7 @@ function utc(value: unknown, name: string): Date | undefined {
 
 function filters(value: unknown): BroadcastFilters {
   const input = object(value, "filters");
-  exactKeys(input, ["languageLevels", "activity", "dailyPromptEnabled"]);
+  exactKeys(input, ["languageLevels", "activity", "dailyPromptEnabled", "noVoiceForDays", "scheduledDeliveryWithinDays"]);
   const languageLevels = input.languageLevels ?? [];
   if (!Array.isArray(languageLevels)
     || languageLevels.length > ADMIN_LANGUAGE_LEVELS.length
@@ -60,11 +61,29 @@ function filters(value: unknown): BroadcastFilters {
   if (typeof activity !== "string" || !BROADCAST_ACTIVITIES.includes(activity as never)) invalid("filters.activity is invalid");
   const dailyPromptEnabled = input.dailyPromptEnabled ?? "any";
   if (dailyPromptEnabled !== "any" && typeof dailyPromptEnabled !== "boolean") invalid("filters.dailyPromptEnabled is invalid");
+  const days = (field: "noVoiceForDays" | "scheduledDeliveryWithinDays"): number | undefined => {
+    const value = input[field];
+    if (value === undefined || value === null) return undefined;
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > 365) {
+      invalid(`filters.${field} must be an integer from 1 to 365`);
+    }
+    return value;
+  };
+  const noVoiceForDays = days("noVoiceForDays");
+  const scheduledDeliveryWithinDays = days("scheduledDeliveryWithinDays");
   return {
     languageLevels: [...languageLevels] as string[],
     activity: activity as BroadcastFilters["activity"],
     dailyPromptEnabled: dailyPromptEnabled as BroadcastFilters["dailyPromptEnabled"],
+    ...(noVoiceForDays === undefined ? {} : { noVoiceForDays }),
+    ...(scheduledDeliveryWithinDays === undefined ? {} : { scheduledDeliveryWithinDays }),
   };
+}
+
+function messageAction(value: unknown): BroadcastMessageAction | null {
+  if (value === undefined || value === null) return null;
+  if (value !== "open_schedule") invalid("messageAction is invalid");
+  return value;
 }
 
 export class AdminBroadcastInputPipe implements PipeTransform<unknown, BroadcastInputDto> {
@@ -72,7 +91,7 @@ export class AdminBroadcastInputPipe implements PipeTransform<unknown, Broadcast
 
   transform(value: unknown): BroadcastInputDto {
     const input = object(value, "Body");
-    exactKeys(input, ["content", "filters", "mode", "scheduledFor"]);
+    exactKeys(input, ["content", "filters", "mode", "scheduledFor", "messageAction"]);
     if (typeof input.content !== "string") invalid("content must be a string");
     const content = input.content.trim();
     if (content.length < 1 || content.length > BROADCAST_LIMITS.contentUtf16) {
@@ -82,7 +101,7 @@ export class AdminBroadcastInputPipe implements PipeTransform<unknown, Broadcast
     const now = this.now();
     if (input.mode === "immediate") {
       if (input.scheduledFor !== undefined && input.scheduledFor !== null) invalid("scheduledFor is forbidden for immediate mode");
-      return { content, filters: filters(input.filters), mode: "immediate", scheduledFor: null, scheduledAt: now };
+      return { content, filters: filters(input.filters), messageAction: messageAction(input.messageAction), mode: "immediate", scheduledFor: null, scheduledAt: now };
     }
     if (typeof input.scheduledFor !== "string" || !LOCAL_MOSCOW_PATTERN.test(input.scheduledFor)) {
       invalid("scheduledFor must be Moscow wall time YYYY-MM-DDTHH:mm");
@@ -95,7 +114,7 @@ export class AdminBroadcastInputPipe implements PipeTransform<unknown, Broadcast
       invalid("scheduledFor is invalid");
     }
     if (scheduledAt!.getTime() <= now.getTime()) invalid("scheduledFor must be in the future");
-    return { content, filters: filters(input.filters), mode: "scheduled", scheduledFor: input.scheduledFor, scheduledAt: scheduledAt! };
+    return { content, filters: filters(input.filters), messageAction: messageAction(input.messageAction), mode: "scheduled", scheduledFor: input.scheduledFor, scheduledAt: scheduledAt! };
   }
 }
 

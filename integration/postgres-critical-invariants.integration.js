@@ -27,6 +27,7 @@ async function createUser(data = {}) {
     data: {
       telegramId: nextTelegramId(),
       dailyPromptEnabled: false,
+      promptWeekdaysMask: 127,
       nextPromptAt: null,
       ...data,
     },
@@ -68,6 +69,7 @@ test("critical PostgreSQL invariants", async (t) => {
         data: {
           telegramId: nextTelegramId(),
           dailyPromptEnabled: false,
+          promptWeekdaysMask: 127,
           nextPromptAt: null,
           lastPromptSentAt: instant,
         },

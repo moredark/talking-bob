@@ -120,6 +120,7 @@ export class SettingsHandler {
 
   private buildKeyboard(user: User, personalities: ActiveAgentPersonality[]): InlineKeyboard {
     const keyboard = new InlineKeyboard()
+      .text("📅 Настроить расписание", "schedule_open").row()
       .text(user.dailyPromptEnabled ? "🔕 Выключить" : "🔔 Включить", "toggle_daily").row()
       .text(user.announcementEnabled ? "🔕 Отключить анонсы" : "📣 Включить анонсы", "toggle_announcements").row();
     this.addTimeRows(keyboard, "set_time");

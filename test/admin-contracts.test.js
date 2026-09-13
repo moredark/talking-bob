@@ -168,6 +168,7 @@ test("user update becomes an audited no-op when another request already applied 
   let writes = 0;
   let auditEnvelope;
   const transaction = {
+    $queryRaw: async (query) => { assert.match(query.strings.join("?"), /FOR UPDATE/); return [{ id: ADMIN_IDS.user }]; },
     user: {
       findUniqueOrThrow: async () => currentUser,
       findUnique: async () => currentUser,
@@ -208,6 +209,7 @@ test("user update audit snapshots contain only fields whose values changed", asy
   };
   let auditEnvelope;
   const transaction = {
+    $queryRaw: async (query) => { assert.match(query.strings.join("?"), /FOR UPDATE/); return [{ id: ADMIN_IDS.user }]; },
     user: {
       findUniqueOrThrow: async () => beforeUser,
       update: async () => afterUser,

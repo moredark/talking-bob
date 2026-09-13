@@ -32,6 +32,7 @@ test("ScheduleService remains a one-argument Prisma facade with schedule default
   const lockedUser = {
     id: "user-1",
     dailyPromptEnabled: true,
+    promptWeekdaysMask: 127,
     dailyPromptHour: 13,
     dailyPromptMinute: 0,
     timezone: "Europe/Moscow",
@@ -61,6 +62,7 @@ test("ScheduleService remains a one-argument Prisma facade with schedule default
     { ...updates[0].data, nextPromptAt: updates[0].data.nextPromptAt.toISOString() },
     {
       dailyPromptEnabled: true,
+      promptWeekdaysMask: 127,
       dailyPromptHour: 15,
       dailyPromptMinute: 30,
       timezone: "Europe/Moscow",

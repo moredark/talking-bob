@@ -47,7 +47,8 @@
 | `id` | `TEXT` | нет | Prisma `uuid()`; PK |
 | `telegramId` | `BIGINT` | нет | Telegram user id; unique |
 | `username` | `TEXT` | да | Telegram username |
-| `dailyPromptEnabled` | `BOOLEAN` | нет | `true` |
+| `dailyPromptEnabled` | `BOOLEAN` | нет | `true`; автоматические вопросы в выбранные дни |
+| `promptWeekdaysMask` | `INTEGER` | нет | `127`; биты Пн–Вс, CHECK 1..127 |
 | `announcementEnabled` | `BOOLEAN` | нет | `true`; отдельное согласие на анонсы |
 | `lastUserMessageAt` | `TIMESTAMPTZ(3)` | да | Последняя принятая user-реплика; несекретный activity fact |
 | `dailyPromptHour` | `INTEGER` | нет | `13` |
@@ -463,8 +464,10 @@ null lifecycle instants, включённые reminders и `21:00`. `UserActivit
 - Расчёты local date/DST не зависят от `TZ` Node.js/container или PostgreSQL
   session `TimeZone`. На spring-forward gap выбирается первая валидная минута
   после gap, при fall-back overlap — более раннее вхождение.
-- Claim берёт только последний overdue slot и записывает следующий slot строго
-  после `now`. Due users блокируются `FOR UPDATE SKIP LOCKED`.
+- Новый claim допускается только для наступившего слота сегодняшней выбранной
+  локальной даты. Курсор продвигается строго после `now` даже при пустом каталоге
+  или занятом occurrence key; прошлые даты не догоняются. Due users блокируются
+  `FOR UPDATE SKIP LOCKED`. Ранее зарезервированные отправки сохраняют свои snapshots.
 - Occurrence key равен `scheduled:<userId>:<local-date>` и не включает timezone.
   После claim key, `scheduledLocalDate`, `scheduledFor` и snapshot неизменяемы;
   изменение настроек влияет только на ещё не claimed occurrence.
@@ -490,6 +493,28 @@ Cleanup запускается ежедневно в 03:30 по runtime clock и
   Несекретные `firstUserMessageAt`, `user_activity_days`, `overallScore` и
   `reportDeliveredAt` сохраняются, поэтому аналитика не зависит от удалённого content.
 - Старые `user_requests` удаляются только если они не связаны с calendar window
+## Practice schedule and broadcast options
+
+Migration `20260913120000_practice_schedule_and_broadcast_options` adds
+`users.promptWeekdaysMask INTEGER NOT NULL DEFAULT 127` with CHECK 1..127.
+Monday is bit 0 and Sunday is bit 6. Disabled schedules retain the mask and
+time, with `nextPromptAt = NULL`; enabling recalculates the weekly cursor.
+
+`broadcasts.messageAction VARCHAR(32)` is nullable, with CHECK allowing only
+NULL or `open_schedule`. Existing rows keep NULL. Optional integer JSON fields
+`filters.noVoiceForDays` and `filters.scheduledDeliveryWithinDays` are independently
+validated as 1..365; disabled fields are omitted. No campaign kind or template
+is stored. `createdAt` records the same evaluation instant used by the
+transactional audience snapshot; API exposes it as `evaluatedAt`.
+
+Eligibility uses retained `User.lastUserMessageAt` and an EXISTS over
+`UserPrompt(source=scheduled, deliveryStatus=sent, sentAt in [T-M days,T])`.
+The existing user/delivery-status/sent-at index supports the delivery lookup.
+The full behavior is maintained in
+[practice-scheduling](../openspec/specs/practice-scheduling/spec.md) and
+[schedule-reengagement](../openspec/specs/schedule-reengagement/spec.md).
+See [rollout and rollback gates](practice-schedule-rollout.md).
+
 ## Admin runtime settings
 
 `runtime_settings` is a checked singleton (`id = 'singleton'`) with JSON object

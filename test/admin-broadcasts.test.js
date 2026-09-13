@@ -136,6 +136,55 @@ test("activity filters use durable lastUserMessageAt with preview and snapshot p
   assert.match(migration, /MAX\(message\."createdAt"\).*"lastUserMessageAt"/s);
 });
 
+test("re-engagement periods are optional, strict, and combined with existing filters", () => {
+  const pipe = new AdminBroadcastInputPipe(() => NOW);
+  const base = {
+    content: "check in",
+    filters: {
+      ...FILTERS,
+      languageLevels: ["B1"],
+      dailyPromptEnabled: true,
+      noVoiceForDays: 14,
+      scheduledDeliveryWithinDays: 14,
+    },
+    messageAction: "open_schedule",
+    mode: "immediate",
+  };
+  const normalized = pipe.transform(base);
+  assert.deepEqual(normalized.filters, base.filters);
+  assert.equal(normalized.messageAction, "open_schedule");
+
+  for (const value of [0, 366, 1.5, "14", true, {}]) {
+    rejects422(() => pipe.transform({ ...base, filters: { ...base.filters, noVoiceForDays: value } }));
+    rejects422(() => pipe.transform({ ...base, filters: { ...base.filters, scheduledDeliveryWithinDays: value } }));
+  }
+  rejects422(() => pipe.transform({ ...base, messageAction: "unknown" }));
+});
+
+test("period predicates preserve exact boundaries and require scheduled sent delivery", () => {
+  const filters = { ...FILTERS, noVoiceForDays: 14, scheduledDeliveryWithinDays: 14 };
+  const where = broadcastAudienceWhere(filters, NOW);
+  assert.deepEqual(where.OR, [
+    { lastUserMessageAt: null },
+    { lastUserMessageAt: { lt: new Date("2026-07-27T10:00:00.000Z") } },
+  ]);
+  assert.deepEqual(where.userPrompts, {
+    some: {
+      source: "scheduled",
+      deliveryStatus: "sent",
+      sentAt: {
+        gte: new Date("2026-07-27T10:00:00.000Z"),
+        lte: NOW,
+      },
+    },
+  });
+  const sql = broadcastSnapshotInsert(IDS.broadcast, filters, NOW).strings.join("?").replace(/\s+/g, " ");
+  assert.match(sql, /lastUserMessageAt.*IS NULL OR.*lastUserMessageAt.*</);
+  assert.match(sql, /EXISTS \( SELECT 1 FROM "user_prompts"/);
+  assert.match(sql, /"source" = 'scheduled'/);
+  assert.match(sql, /"deliveryStatus" = 'sent'/);
+});
+
 test("admin controller exposes exactly the five broadcast routes", () => {
   const routes = Object.getOwnPropertyNames(AdminController.prototype)
     .flatMap((name) => {
@@ -162,7 +211,7 @@ test("create snapshots a large audience with one database INSERT SELECT and boun
   const recipientReads = [];
   const tx = {
     broadcast: {
-      create: async () => row,
+      create: async ({ data }) => { row = { ...row, ...data }; return row; },
       update: async ({ data }) => { row = { ...row, ...data }; return row; },
       findUnique: async () => row,
     },
@@ -178,10 +227,12 @@ test("create snapshots a large audience with one database INSERT SELECT and boun
   );
 
   const result = await service.create({
-    content: "Announcement", filters: FILTERS, mode: "immediate", scheduledFor: null, scheduledAt: NOW,
+    content: "Announcement", filters: { ...FILTERS, noVoiceForDays: 14 }, messageAction: "open_schedule", mode: "immediate", scheduledFor: null, scheduledAt: NOW,
   }, NOW);
 
   assert.equal(result.counts.total, audienceCount);
+  assert.equal(result.evaluatedAt.toISOString(), NOW.toISOString());
+  assert.equal(result.messageAction, "open_schedule");
   assert.equal(rawStatements.length, 1);
   const sql = rawStatements[0].strings.join("?").replace(/\s+/g, " ");
   assert.match(sql, /INSERT INTO "broadcast_recipients"/);
@@ -238,7 +289,7 @@ function deliverySubject({ eligible = true, sendError } = {}) {
   const claim = {
     id: IDS.recipient, broadcastId: IDS.broadcast, userId: IDS.user,
     telegramIdSnapshot: 123456789n, attemptCount: 0,
-    claimToken: "claim-token", content: "Announcement",
+    claimToken: "claim-token", content: "Announcement", filters: {}, messageAction: null,
   };
   return { dispatcher, sender, claim, updates, aggregates, sends, captures };
 }
@@ -259,6 +310,22 @@ test("dispatcher rechecks opt-out before I/O and records successful delivery aft
   assert.equal(success.updates[0].data.deliveryAttemptedAt, NOW);
   assert.equal(success.updates[1].data.status, "sent");
   assert.deepEqual(success.aggregates[0].data, { sentCount: { increment: 1 } });
+});
+
+test("dispatcher passes persisted message action to sender", async () => {
+  const subject = deliverySubject();
+  subject.claim.messageAction = "open_schedule";
+  await subject.dispatcher.deliver(subject.claim, subject.sender, NOW);
+  assert.deepEqual(subject.sends[0][3], { messageAction: "open_schedule" });
+});
+
+test("dispatcher fails closed for corrupt persisted broadcast configuration", async () => {
+  const subject = deliverySubject();
+  subject.claim.filters = { noVoiceForDays: "14" };
+  await subject.dispatcher.deliver(subject.claim, subject.sender, NOW);
+  assert.equal(subject.sends.length, 0);
+  assert.equal(subject.updates.at(-1).data.status, "failed");
+  assert.equal(subject.updates.at(-1).data.lastErrorCode, "invalid_broadcast_configuration");
 });
 
 test("dispatcher reads GrammyError.error retry_after, makes 4xx permanent, and keeps unknown outcomes ambiguous", async (t) => {
@@ -569,4 +636,45 @@ test("broadcast retention processes 501 rows in independent transactions bounded
   assert.equal(new Set(subject.transactionClients).size, 4);
   const writeTxIds = [...new Set(subject.operations.filter(({ type }) => type !== "select").map(({ txId }) => txId))];
   assert.deepEqual(writeTxIds, [selects[0].txId, selects[1].txId]);
+});
+
+test("preview is informational; creation fixes a fresh instant even when the audience becomes empty", async () => {
+  let audience = 2, row = broadcastRow(), auditEnvelope;
+  const queries = [];
+  const tx = {
+    broadcast: {
+      create: async ({ data }) => (row = { ...row, ...data }),
+      update: async ({ data }) => (row = { ...row, ...data }),
+      findUnique: async () => row,
+    },
+    broadcastRecipient: { findMany: async () => [], count: async () => audience },
+    $executeRaw: async query => { queries.push(query); return audience; },
+  };
+  const service = new AdminBroadcastsService(
+    { user: { count: async () => audience } },
+    { runSuccess: async (_, callback) => { auditEnvelope = await callback(tx); return auditEnvelope.result; } },
+    { current: () => ({ actorId: IDS.actor, actorUsername: "admin" }) },
+  );
+  const input = new AdminBroadcastInputPipe(() => NOW).transform({
+    ...immediate("Мой текст"), filters: { ...FILTERS, noVoiceForDays: 30, scheduledDeliveryWithinDays: 7 }, messageAction: null,
+  });
+  const preview = await service.preview(input, NOW);
+  assert.equal(preview.audienceCount, 2);
+  assert.equal(preview.evaluatedAt, NOW);
+  audience = 0;
+  const later = new Date(NOW.getTime() + 1000);
+  const created = await service.create(input, later);
+  assert.equal(created.counts.total, 0);
+  assert.equal(created.evaluatedAt, later);
+  assert.equal(row.createdAt, later);
+  assert.deepEqual(row.filters, input.filters);
+  assert.equal(row.content, "Мой текст");
+  assert.equal(row.messageAction, null);
+  assert.deepEqual(auditEnvelope.after.filters, input.filters);
+  assert.equal(auditEnvelope.after.messageAction, null);
+  assert.equal(auditEnvelope.after.evaluatedAt, later);
+  const times = queries[0].values.filter(value => value instanceof Date).map(value => value.getTime());
+  assert.ok(times.includes(later.getTime()));
+  assert.ok(times.includes(later.getTime() - 30 * 86400000));
+  assert.ok(times.includes(later.getTime() - 7 * 86400000));
 });

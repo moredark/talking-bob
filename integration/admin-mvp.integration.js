@@ -2,7 +2,7 @@ require("reflect-metadata");
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { randomUUID } = require("node:crypto");
-const { PrismaClient } = require("@prisma/client");
+const { PrismaClient, Prisma } = require("@prisma/client");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { Module } = require("@nestjs/common");
@@ -24,6 +24,8 @@ const { AdminSessionsService } = require("../dist/modules/admin/admin-sessions.s
 const { AdminSettingsService } = require("../dist/modules/admin/admin-settings.service");
 const { DataRetentionService } = require("../dist/modules/error-log/data-retention.service");
 const { BroadcastDispatcher } = require("../dist/modules/broadcast");
+const { broadcastAudienceWhere } = require("../dist/modules/broadcast/broadcast-audience");
+const { broadcastSnapshotInsert } = require("../dist/modules/broadcast/broadcast-snapshot");
 
 const EXPECTED_MIGRATIONS = [
   "20260118172424",
@@ -49,6 +51,7 @@ const EXPECTED_MIGRATIONS = [
   "20260813120000_split_agent_prompt_rules",
   "20260910120000_add_readiness_prompt",
   "20260910130000_refine_readiness_prompt",
+  "20260913120000_practice_schedule_and_broadcast_options",
 ];
 
 const prisma = new PrismaClient();
@@ -190,6 +193,83 @@ test("Admin MVP PostgreSQL rollout journey", async (t) => {
       assert.doesNotMatch(JSON.stringify(audit.body), /rollout announcement|provider-detail-only/);
     } finally {
       await app.close();
+    }
+  });
+
+  await t.test("broadcast period filters keep Prisma and SQL snapshot parity at fixed T", async () => {
+    const now = new Date("2026-09-13T10:00:00.000Z");
+    const cutoff = new Date(now.getTime() - 14 * 86400000);
+    const owned = [];
+    const broadcasts = [];
+    const prompt = await prisma.prompt.create({ data: { topic: "broadcast-" + randomUUID(), textContent: "scheduled" } });
+    async function candidate(voice, sentAt, source = "scheduled", status = "sent") {
+      const row = await createUser(); owned.push(row.id);
+      await prisma.user.update({ where: { id: row.id }, data: { dailyPromptEnabled: true, lastUserMessageAt: voice } });
+      if (sentAt) {
+        const date = sentAt.toISOString().slice(0, 10);
+        await prisma.userPrompt.create({ data: {
+          userId: row.id, promptId: prompt.id, source, deliveryStatus: status === "ambiguous" ? "pending" : status,
+          ...(["failed", "ambiguous"].includes(status) ? { deliveryAttemptedAt: sentAt, lastDeliveryErrorCode: "telegram_network_unknown", lastDeliveryErrorAt: sentAt } : {}),
+          ...(status === "sent" ? { sentAt, deliveryAttemptedAt: sentAt } : {}),
+          ...(source === "scheduled" ? {
+            scheduledFor: sentAt, scheduledOccurrenceKey: "scheduled:" + row.id + ":" + date,
+            scheduledLocalDate: new Date(date + "T00:00:00Z"), timezoneSnapshot: "UTC",
+          } : {}),
+        } });
+      }
+      return row.id;
+    }
+    try {
+      const never = await candidate(null, now);
+      const before = await candidate(new Date(cutoff.getTime() - 1), cutoff);
+      const exact = await candidate(cutoff, now);
+      const after = await candidate(new Date(cutoff.getTime() + 1), now);
+      const oldDelivery = await candidate(null, new Date(cutoff.getTime() - 1));
+      const futureDelivery = await candidate(null, new Date(now.getTime() + 1));
+      const manual = await candidate(null, now, "manual");
+      const pending = await candidate(null, now, "scheduled", "pending");
+      const absent = await candidate(null, null);
+      await candidate(null, now, "scheduled", "failed");
+      await candidate(null, now, "scheduled", "ambiguous");
+      await prisma.userPrompt.create({ data: {
+        userId: never, promptId: prompt.id, source: "scheduled", deliveryStatus: "sent",
+        sentAt: cutoff, deliveryAttemptedAt: cutoff, scheduledFor: cutoff,
+        scheduledOccurrenceKey: "scheduled:" + never + ":2026-08-30",
+        scheduledLocalDate: new Date("2026-08-30T00:00:00Z"), timezoneSnapshot: "UTC",
+      } });
+      const cases = [
+        [{}, owned],
+        [{ noVoiceForDays: 14 }, owned.filter(id => id !== exact && id !== after)],
+        [{ scheduledDeliveryWithinDays: 14 }, [never, before, exact, after]],
+        [{ noVoiceForDays: 14, scheduledDeliveryWithinDays: 14 }, [never, before]],
+        [{ noVoiceForDays: 30, scheduledDeliveryWithinDays: 7 }, [never]],
+        [{ noVoiceForDays: 14, activity: "7d" }, []],
+        [{ noVoiceForDays: 14, scheduledDeliveryWithinDays: 14, dailyPromptEnabled: false }, []],
+      ];
+      for (const [extra, expectedOwned] of cases) {
+        const filters = { languageLevels: [], activity: "any", dailyPromptEnabled: "any", ...extra };
+        const broadcast = await prisma.broadcast.create({ data: { content: "parity", filters, mode: "immediate", scheduledAt: now, createdById: "integration", createdByUsername: "integration" } });
+        broadcasts.push(broadcast.id);
+        const expected = await prisma.user.findMany({ where: broadcastAudienceWhere(filters, now), select: { id: true } });
+        const sql = broadcastSnapshotInsert(broadcast.id, filters, now);
+        if (extra.scheduledDeliveryWithinDays) {
+          const plan = await prisma.$queryRaw(Prisma.sql(["EXPLAIN ", ""], sql));
+          assert.match(JSON.stringify(plan), /user_prompts/i);
+        }
+        await prisma.$executeRaw(sql);
+        const recipients = await prisma.broadcastRecipient.findMany({ where: { broadcastId: broadcast.id }, select: { userId: true } });
+        const ids = recipients.map(row => row.userId).sort();
+        assert.deepEqual(ids, expected.map(row => row.id).sort());
+        assert.deepEqual(ids.filter(id => owned.includes(id)), [...expectedOwned].sort());
+        await prisma.$executeRaw(sql);
+        assert.equal(await prisma.broadcastRecipient.count({ where: { broadcastId: broadcast.id } }), ids.length);
+      }
+      assert.ok([oldDelivery, futureDelivery, manual, pending, absent].every(id => owned.includes(id)));
+    } finally {
+      await prisma.broadcast.deleteMany({ where: { id: { in: broadcasts } } });
+      await prisma.userPrompt.deleteMany({ where: { userId: { in: owned } } });
+      await prisma.user.deleteMany({ where: { id: { in: owned } } });
+      await prisma.prompt.delete({ where: { id: prompt.id } });
     }
   });
 

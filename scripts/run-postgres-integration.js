@@ -4,7 +4,7 @@ const { spawn, spawnSync } = require("node:child_process");
 
 const POSTGRES_IMAGE =
   "postgres:16.13-trixie@sha256:5d143123fdf80462d1778cd4f24b9f7ca13c87174bca19141fb194c5a1ebca59";
-const LATEST_MIGRATION = "20260910130000_refine_readiness_prompt";
+const LATEST_MIGRATION = "20260913120000_practice_schedule_and_broadcast_options";
 const ALL_MIGRATIONS = [
   "20260118172424",
   "20260124153443_add_conversation_messages",
@@ -29,6 +29,7 @@ const ALL_MIGRATIONS = [
   "20260813120000_split_agent_prompt_rules",
   "20260910120000_add_readiness_prompt",
   "20260910130000_refine_readiness_prompt",
+  "20260913120000_practice_schedule_and_broadcast_options",
 ];
 const PRE_LIFECYCLE_MIGRATIONS = [
   "20260118172424",
@@ -692,6 +693,11 @@ async function main() {
   await run(process.execPath, ["--test", "integration/admin-analytics.integration.js"], env);
   await run(process.execPath, ["--test", "integration/admin-mvp.integration.js"], env);
   await run(process.execPath, ["--test", "integration/postgres-critical-invariants.integration.js"], env);
+  const practiceDatabase = database + "_practice";
+  createDatabase(practiceDatabase);
+  const practiceUrl = databaseUrlFor(practiceDatabase, port);
+  await migrate(practiceUrl);
+  await run(process.execPath, ["--test", "integration/practice-schedule.integration.js"], { ...env, DATABASE_URL: practiceUrl });
   await verifyDumpAndRestore();
   await verifyLegacyTimezoneMatrix(port);
 }

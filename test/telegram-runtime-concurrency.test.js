@@ -87,7 +87,7 @@ function createFakeBot() {
 
   const addRoute = (predicate, handler) => {
     middleware.push((ctx, next) =>
-      predicate(ctx) ? handler(ctx) : next(),
+      predicate(ctx) ? handler(ctx, next) : next(),
     );
   };
 
@@ -105,7 +105,7 @@ function createFakeBot() {
     on(name, handler) {
       events.set(name, handler);
       addRoute(
-        (ctx) => name === "message:voice" && Boolean(ctx.update.message?.voice),
+        (ctx) => (name === "message:voice" && Boolean(ctx.update.message?.voice)) || (name === "message:text" && typeof ctx.message?.text === "string"),
         handler,
       );
     },
@@ -162,6 +162,7 @@ function createBareService({
   telegramUpdates = 4,
   aiRequestLimiter,
   broadcastDispatcher,
+  scheduleHandler,
 } = {}) {
   return new TelegramService(
     {
@@ -192,6 +193,7 @@ function createBareService({
     undefined,
     undefined,
     broadcastDispatcher,
+    scheduleHandler,
   );
 }
 
@@ -599,4 +601,73 @@ test("shutdown uses one absolute deadline for stuck startup and runner stop and 
 
   service.scheduleRunnerRestart();
   assert.equal(service.botStartRetryTimer, undefined);
+});
+
+
+test("schedule commands and callbacks are registered when the optional handler is provided", async () => {
+  const calls = [];
+  const scheduleHandler = {
+    handle: async () => calls.push("open"),
+    cancelTimeInput: () => {},
+    openTimePicker: async () => calls.push("picker"),
+    handleTimeSelect: async () => calls.push("preset"),
+    handleTimeText: async () => false,
+    handleTime: async () => calls.push("time"),
+    handleDays: async () => calls.push("days"),
+    handleDayToggle: async () => calls.push("day"),
+    handleSaveDays: async () => calls.push("save"),
+    handleCancel: async () => calls.push("cancel"),
+    handleManual: async () => calls.push("manual"),
+    handleEnable: async () => calls.push("enable"),
+    handleReminderChoice: async () => calls.push("reminder"),
+  };
+  const { fakeBot } = createService({ scheduleHandler });
+  assert.equal(typeof fakeBot.commands.get("schedule"), "function");
+  assert.equal(typeof fakeBot.commands.get("time"), "function");
+  const callback = (data) => fakeBot.dispatch(callbackContext(1, 1, data));
+  await fakeBot.dispatch({ ...callbackContext(1, 1), command: "schedule" });
+  await fakeBot.dispatch({ ...callbackContext(1, 2), command: "time" });
+  await callback("schedule_open");
+  await callback("schedule_reminder_v1_on");
+  await callback("schedule_open");
+  assert.deepEqual(calls, ["open", "time", "open", "reminder", "open"]);
+  await callback("schedule_time_open");
+  await callback("schedule_time_v1_9_0");
+  assert.deepEqual(calls.slice(-2), ["picker", "preset"]);
+  let cancelled = 0;
+  let consumed = 0;
+  scheduleHandler.cancelTimeInput = () => cancelled++;
+  scheduleHandler.handleTimeText = async () => { consumed++; return true; };
+  const textCtx = { ...callbackContext(1, 5), callbackQuery: undefined, message: { text: "08:45" } };
+  await fakeBot.dispatch(textCtx);
+  assert.equal(consumed, 1);
+  textCtx.message.text = "/start";
+  textCtx.command = "start";
+  await fakeBot.dispatch(textCtx);
+  assert.equal(cancelled, 1);
+  assert.equal(consumed, 1);
+  await callback("schedule_open");
+  assert.equal(cancelled, 2);
+  const errors = [];
+  const stale = callbackContext(1, 3, "schedule_days_v99_127");
+  stale.reply = async (message) => errors.push(message);
+  const malformed = callbackContext(1, 4, "schedule_day_v1_bad");
+  malformed.reply = async (message) => errors.push(message);
+  await fakeBot.dispatch(stale);
+  await fakeBot.dispatch(malformed);
+  assert.equal(errors.length, 2);
+  assert.match(errors[0], /устарела/);
+});
+
+test("Telegram broadcast adapter preserves schedule action as an inline button", async () => {
+  const sent = [];
+  const broadcastDispatcher = { setSender(sender) { this.sender = sender; } };
+  const { fakeBot, service } = createService({ broadcastDispatcher, scheduleHandler: {} });
+  fakeBot.api = { sendMessage: async (...args) => sent.push(args) };
+  service.startRunner = () => {};
+  service.onModuleInit();
+  await broadcastDispatcher.sender.sendPlainText(42n, "Проверьте время", undefined, { messageAction: "open_schedule" });
+  assert.equal(sent[0][0], "42");
+  assert.equal(sent[0][1], "Проверьте время");
+  assert.equal(sent[0][2].reply_markup.inline_keyboard[0][0].callback_data, "schedule_open");
 });

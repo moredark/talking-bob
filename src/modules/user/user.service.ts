@@ -23,7 +23,7 @@ export class UserService {
   async createUser(data: CreateUserData): Promise<User> {
     const now = new Date();
     const create = async (client: Prisma.TransactionClient | PrismaService, agentTone: string) => client.user.create({
-      data: { telegramId: data.telegramId, username: data.username, agentTone, dailyPromptEnabled: true, announcementEnabled: true, dailyPromptHour: 13, dailyPromptMinute: 0, timezone: DEFAULT_USER_TIMEZONE, nextPromptAt: nextSlotAtOrAfter(now, 13, 0, DEFAULT_USER_TIMEZONE).instant, currentStreak: 0, longestStreak: 0, streakReminderEnabled: true, streakReminderHour: 21, streakReminderMinute: 0 },
+      data: { telegramId: data.telegramId, username: data.username, agentTone, dailyPromptEnabled: true, promptWeekdaysMask: 127, announcementEnabled: true, dailyPromptHour: 13, dailyPromptMinute: 0, timezone: DEFAULT_USER_TIMEZONE, nextPromptAt: nextSlotAtOrAfter(now, 13, 0, DEFAULT_USER_TIMEZONE).instant, currentStreak: 0, longestStreak: 0, streakReminderEnabled: true, streakReminderHour: 21, streakReminderMinute: 0 },
     });
     if (!this.personalityService || typeof (this.prisma as any).$transaction !== "function") return create(this.prisma, await this.defaultPersonalityKey());
     return this.prisma.$transaction(async (tx) => create(tx, await this.lockedDefaultPersonalityKey(tx)));
@@ -55,7 +55,7 @@ export class UserService {
     const upsert = (client: Prisma.TransactionClient | PrismaService, agentTone: string) => client.user.upsert({
       where: { telegramId },
       update: {},
-      create: { telegramId, username, agentTone, dailyPromptEnabled: true, announcementEnabled: true, dailyPromptHour: 13, dailyPromptMinute: 0, timezone: DEFAULT_USER_TIMEZONE, nextPromptAt: nextSlotAtOrAfter(now, 13, 0, DEFAULT_USER_TIMEZONE).instant, currentStreak: 0, longestStreak: 0, streakReminderEnabled: true, streakReminderHour: 21, streakReminderMinute: 0 },
+      create: { telegramId, username, agentTone, dailyPromptEnabled: true, promptWeekdaysMask: 127, announcementEnabled: true, dailyPromptHour: 13, dailyPromptMinute: 0, timezone: DEFAULT_USER_TIMEZONE, nextPromptAt: nextSlotAtOrAfter(now, 13, 0, DEFAULT_USER_TIMEZONE).instant, currentStreak: 0, longestStreak: 0, streakReminderEnabled: true, streakReminderHour: 21, streakReminderMinute: 0 },
     });
     try {
       if (!this.personalityService || typeof (this.prisma as any).$transaction !== "function") return await upsert(this.prisma, await this.defaultPersonalityKey());

@@ -261,3 +261,9 @@ WHERE "updatedAt" >= now() - interval '15 minutes' GROUP BY status;
 SELECT outcome, count(*) FROM ai_provider_calls
 WHERE "createdAt" >= now() - interval '15 minutes' GROUP BY outcome;
 ```
+
+## Practice schedule and flexible broadcast rollout
+
+For the additive migration, backend preview gate, admin rollout and read-only
+rollback queries, follow [practice schedule rollout](practice-schedule-rollout.md).
+A code rollout does not create or send a broadcast.

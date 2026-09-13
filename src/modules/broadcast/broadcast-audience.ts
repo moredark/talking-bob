@@ -24,13 +24,38 @@ export function broadcastAudienceWhere(filters: BroadcastFilters, now: Date): Pr
       lt: now,
     };
   }
+  if (filters.noVoiceForDays !== undefined) {
+    const cutoff = new Date(now.getTime() - filters.noVoiceForDays * DAY_MS);
+    where.OR = [{ lastUserMessageAt: null }, { lastUserMessageAt: { lt: cutoff } }];
+  }
+  if (filters.scheduledDeliveryWithinDays !== undefined) {
+    const cutoff = new Date(now.getTime() - filters.scheduledDeliveryWithinDays * DAY_MS);
+    where.userPrompts = { some: { source: "scheduled", deliveryStatus: "sent", sentAt: { gte: cutoff, lte: now } } };
+  }
   return where;
+}
+
+function optionalDays(value: unknown, name: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > 365) {
+    throw new Error(`Invalid saved broadcast filter: ${name}`);
+  }
+  return value;
+}
+
+
+export function normalizeBroadcastMessageAction(value: unknown): "open_schedule" | null {
+  if (value === undefined || value === null) return null;
+  if (value !== "open_schedule") throw new Error("Invalid saved broadcast message action");
+  return value;
 }
 
 export function normalizeBroadcastFilters(value: unknown): BroadcastFilters {
   const source = value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+  const noVoiceForDays = optionalDays(source.noVoiceForDays, "noVoiceForDays");
+  const scheduledDeliveryWithinDays = optionalDays(source.scheduledDeliveryWithinDays, "scheduledDeliveryWithinDays");
   return {
     languageLevels: Array.isArray(source.languageLevels)
       ? source.languageLevels.filter((item): item is string => typeof item === "string")
@@ -39,6 +64,8 @@ export function normalizeBroadcastFilters(value: unknown): BroadcastFilters {
     dailyPromptEnabled: typeof source.dailyPromptEnabled === "boolean"
       ? source.dailyPromptEnabled
       : "any",
+    ...(noVoiceForDays === undefined ? {} : { noVoiceForDays }),
+    ...(scheduledDeliveryWithinDays === undefined ? {} : { scheduledDeliveryWithinDays }),
   };
 }
 

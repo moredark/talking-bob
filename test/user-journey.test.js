@@ -357,3 +357,120 @@ test("deterministic user journey reaches an automatic report and a non-repeating
   assert.equal(quota.rolling.length, 4);
   assert.deepEqual(quota.released, []);
 });
+
+test("administrator configures outreach and user chooses a weekly schedule then starts on a free day", async (t) => {
+  const { AdminBroadcastInputPipe } = require("../dist/modules/admin/admin-broadcast-validation.pipe");
+  const { AdminBroadcastsService } = require("../dist/modules/admin/admin-broadcasts.service");
+  const { BroadcastDispatcher } = require("../dist/modules/broadcast/broadcast-dispatcher.service");
+  const { broadcastAudienceWhere } = require("../dist/modules/broadcast/broadcast-audience");
+  const { ScheduleHandler } = require("../dist/modules/telegram/handlers/schedule.handler");
+  const now = new Date("2026-09-15T09:00:00Z"); // Tuesday is free in the schedule chosen below.
+  t.mock.timers.enable({ apis: ["Date"], now });
+  const db = createInMemoryPrisma({ prompts: [{ id: "practice", topic: "Travel", audioFileId: null }] });
+  const users = new UserService(db);
+  const registered = await users.findOrCreateByTelegramId(4242n, "alice");
+  const current = () => db.state.users[0];
+  current().lastUserMessageAt = null;
+  const deliveredAt = new Date("2026-09-14T10:00:00Z");
+  let row, recipient;
+  const filters = { languageLevels: [], activity: "any", dailyPromptEnabled: true, noVoiceForDays: 14, scheduledDeliveryWithinDays: 14 };
+  const eligible = () => current().dailyPromptEnabled && current().announcementEnabled
+    && (!current().lastUserMessageAt || current().lastUserMessageAt < new Date(now - 14 * 86400000))
+    && deliveredAt <= now && deliveredAt >= new Date(now - 14 * 86400000);
+  const audience = {
+    user: {
+      count: async ({ where }) => { assert.deepEqual(where, broadcastAudienceWhere(filters, now)); return Number(eligible()); },
+      findFirst: async ({ where }) => { assert.deepEqual(where, { ...broadcastAudienceWhere(filters, now), id: registered.id }); return eligible() ? { id: registered.id } : null; },
+    },
+    broadcast: {
+      create: async ({ data }) => (row = {
+        id: "broadcast", ...data, contentPurgedAt: null, createdAt: now, updatedAt: now, terminalAt: null,
+        totalRecipients: 0, sentCount: 0, failedCount: 0, ambiguousCount: 0, skippedCount: 0,
+      }),
+      update: async ({ data }) => Object.assign(row, data),
+      updateMany: async ({ data }) => { for (const [key, value] of Object.entries(data)) row[key] += value.increment; return { count: 1 }; },
+      findUnique: async () => row,
+    },
+    broadcastRecipient: {
+      findMany: async () => recipient ? [recipient] : [],
+      count: async () => Number(Boolean(recipient)),
+      updateMany: async ({ where, data }) => {
+        if (recipient.status !== where.status || recipient.claimToken !== where.claimToken) return { count: 0 };
+        for (const [key, value] of Object.entries(data)) recipient[key] = value?.increment ? recipient[key] + value.increment : value;
+        return { count: 1 };
+      },
+    },
+    $executeRaw: async (query) => {
+      assert.match(query.strings.join("?"), /EXISTS/);
+      assert.equal(eligible(), true);
+      recipient = {
+        id: "recipient", broadcastId: row.id, userId: registered.id, telegramIdSnapshot: 4242n,
+        usernameSnapshot: "alice", languageLevelSnapshot: null, dailyPromptEnabledSnapshot: true, announcementEnabledSnapshot: true,
+        status: "pending", attemptCount: 0, claimToken: "claim", createdAt: now, updatedAt: now,
+      };
+      return 1;
+    },
+  };
+  audience.$transaction = async callback => callback(audience);
+  const audit = { runSuccess: async (_, callback) => (await callback(audience)).result };
+  const broadcasts = new AdminBroadcastsService(audience, audit, { current: () => ({ actorId: "admin", actorUsername: "admin" }) });
+  const input = new AdminBroadcastInputPipe(() => now).transform({
+    content: "Удобно ли время голосовых вопросов? Выберите подходящее расписание.",
+    filters, messageAction: "open_schedule", mode: "immediate",
+  });
+  assert.equal((await broadcasts.preview(input, now)).audienceCount, 1);
+  const created = await broadcasts.create(input, now);
+  assert.equal(created.messageAction, "open_schedule");
+  row.status = "processing";
+  const sent = [];
+  await new BroadcastDispatcher(audience, {}).deliver(
+    { ...recipient, content: row.content, filters: row.filters, messageAction: row.messageAction },
+    { sendPlainText: async (...args) => sent.push(args) }, now,
+  );
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0][1], input.content);
+  assert.deepEqual(sent[0][3], { messageAction: "open_schedule" });
+  assert.equal(recipient.status, "sent");
+
+  const schedules = new ScheduleService(db);
+  const controls = [];
+  let reminderWrites = 0;
+  const handler = new ScheduleHandler(users, schedules, {
+    updateReminderEnabled: async (id, enabled) => {
+      reminderWrites += 1;
+      return db.user.update({ where: { id }, data: { streakReminderEnabled: enabled } });
+    },
+  });
+  const ctx = {
+    from: { id: 4242 }, message: { text: "/schedule" },
+    reply: async (text, options) => controls.push({ text, options }),
+    editMessageText: async (text, options) => controls.push({ text, options }),
+  };
+  await handler.handle(ctx);
+  await handler.handleSaveDays(ctx, "schedule_save_v1_21"); // Mon/Wed/Fri
+  assert.equal(current().promptWeekdaysMask, 21);
+  assert.equal(current().streakReminderEnabled, true);
+  assert.equal(reminderWrites, 0, "saving schedule never silently changes streak reminders");
+  assert.match(controls.at(-1).text, /каждый день/);
+  ctx.message.text = "/time 08:45";
+  await handler.handleTime(ctx);
+  assert.equal(current().dailyPromptHour, 8);
+  assert.equal(current().dailyPromptMinute, 45);
+  assert.equal(current().nextPromptAt.toISOString(), "2026-09-16T05:45:00.000Z");
+  await handler.handleReminderChoice(ctx, false);
+  assert.equal(current().streakReminderEnabled, false);
+  let admissions = 0;
+  const daily = new DailyPromptDispatcher(schedules);
+  const questions = [];
+  daily.setBot({ api: { sendMessage: async (...args) => questions.push(args) } });
+  const start = new StartHandler(users, {
+    consumeCalendarDayLimit: async () => { admissions += 1; return { allowed: true, requestId: "manual" }; },
+    releaseAction: async () => {},
+  }, new PromptService(db), schedules, daily);
+  await start.handle({ ...ctx, update: { update_id: 99 } });
+  assert.equal(admissions, 1, "only the manual lesson consumes quota");
+  assert.equal(questions.length, 1);
+  assert.equal(db.state.userPrompts[0].source, "manual");
+  assert.equal(current().promptWeekdaysMask, 21);
+  assert.equal(current().streakReminderEnabled, false);
+});

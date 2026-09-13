@@ -5,7 +5,8 @@ import { ArrowLeft, Eye, Megaphone, Send } from "@lucide/vue";
 import { useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import { adminApi } from "../api/admin.api";
-import type { BroadcastActivity, BroadcastMode, BroadcastPreview, CreateBroadcastDto, LanguageLevel } from "../types";
+import { broadcastActionLabel, broadcastFilterSummary } from "../lib/broadcast-summary";
+import type { BroadcastActivity, BroadcastMode, BroadcastPreview, BroadcastMessageAction, CreateBroadcastDto, LanguageLevel } from "../types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,6 +25,9 @@ const form = reactive({
   languageLevels: [] as LanguageLevel[],
   activity: "any" as BroadcastActivity,
   dailyPromptEnabled: "any" as "any" | "true" | "false",
+  noVoiceForDays: "",
+  scheduledDeliveryWithinDays: "",
+  messageAction: "none" as "none" | BroadcastMessageAction,
   mode: "immediate" as BroadcastMode,
   scheduledFor: "",
 });
@@ -41,10 +45,22 @@ const contentError = computed(() => {
   return "";
 });
 const scheduleError = computed(() => form.mode === "scheduled" && !form.scheduledFor ? "Укажите дату и время по Москве" : "");
+function inputText(value: unknown): string {
+  return value == null ? "" : String(value).trim();
+}
+function periodError(value: unknown, label: string) {
+  const text = inputText(value);
+  if (!text) return "";
+  if (!/^\d+$/.test(text)) return label + ": укажите целое число от 1 до 365";
+  const number = Number(text);
+  return number >= 1 && number <= 365 ? "" : label + ": укажите целое число от 1 до 365";
+}
+const noVoiceError = computed(() => periodError(form.noVoiceForDays, "Нет голосовых ответов"));
+const deliveryError = computed(() => periodError(form.scheduledDeliveryWithinDays, "Получал вопросы"));
 const currentSignature = computed(() => JSON.stringify(buildPayload()));
 const previewIsCurrent = computed(() => Boolean(preview.value && previewSignature.value === currentSignature.value));
 const canCreate = computed(() => previewIsCurrent.value && (preview.value?.audienceCount ?? 0) > 0);
-const canPreview = computed(() => !contentError.value && !scheduleError.value && !previewing.value && !creating.value);
+const canPreview = computed(() => !contentError.value && !scheduleError.value && !noVoiceError.value && !deliveryError.value && !previewing.value && !creating.value);
 
 function buildPayload(): CreateBroadcastDto {
   return {
@@ -53,9 +69,14 @@ function buildPayload(): CreateBroadcastDto {
       languageLevels: [...form.languageLevels],
       activity: form.activity,
       dailyPromptEnabled: form.dailyPromptEnabled === "any" ? "any" : form.dailyPromptEnabled === "true",
+      ...(inputText(form.noVoiceForDays) ? { noVoiceForDays: Number(inputText(form.noVoiceForDays)) } : {}),
+      ...(inputText(form.scheduledDeliveryWithinDays)
+        ? { scheduledDeliveryWithinDays: Number(inputText(form.scheduledDeliveryWithinDays)) }
+        : {}),
     },
     mode: form.mode,
     scheduledFor: form.mode === "scheduled" ? form.scheduledFor : null,
+    messageAction: form.messageAction === "none" ? null : form.messageAction,
   };
 }
 
@@ -144,9 +165,33 @@ function formatUtc(value: string) {
             </Field>
 
             <FieldGroup class="md:grid md:grid-cols-2">
+              <Field :data-invalid="Boolean(noVoiceError)">
+                <FieldLabel for="broadcast-no-voice">Нет голосовых ответов N дней</FieldLabel>
+                <Input id="broadcast-no-voice" v-model="form.noVoiceForDays" type="number" min="1" max="365" step="1" inputmode="numeric" :aria-invalid="Boolean(noVoiceError)" :disabled="previewing || creating" placeholder="Не учитывать" />
+                <FieldDescription>Оставьте пустым, чтобы выключить фильтр.</FieldDescription>
+                <FieldError v-if="noVoiceError">{{ noVoiceError }}</FieldError>
+              </Field>
+              <Field :data-invalid="Boolean(deliveryError)">
+                <FieldLabel for="broadcast-scheduled-delivery">Получал вопросы по расписанию за M дней</FieldLabel>
+                <Input id="broadcast-scheduled-delivery" v-model="form.scheduledDeliveryWithinDays" type="number" min="1" max="365" step="1" inputmode="numeric" :aria-invalid="Boolean(deliveryError)" :disabled="previewing || creating" placeholder="Не учитывать" />
+                <FieldDescription>Учитываются только вопросы, успешно отправленные по расписанию.</FieldDescription>
+                <FieldError v-if="deliveryError">{{ deliveryError }}</FieldError>
+              </Field>
               <Field><FieldLabel for="broadcast-activity">Активность</FieldLabel><Select v-model="form.activity" :disabled="previewing || creating"><SelectTrigger id="broadcast-activity"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="any">Любая</SelectItem><SelectItem value="7d">За 7 дней</SelectItem><SelectItem value="30d">За 30 дней</SelectItem><SelectItem value="90d">За 90 дней</SelectItem><SelectItem value="never">Никогда не отвечали</SelectItem></SelectGroup></SelectContent></Select></Field>
-              <Field><FieldLabel for="broadcast-daily">Ежедневные вопросы</FieldLabel><Select v-model="form.dailyPromptEnabled" :disabled="previewing || creating"><SelectTrigger id="broadcast-daily"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="any">Не учитывать</SelectItem><SelectItem value="true">Включены</SelectItem><SelectItem value="false">Выключены</SelectItem></SelectGroup></SelectContent></Select></Field>
+              <Field><FieldLabel for="broadcast-daily">Вопросы по расписанию</FieldLabel><Select v-model="form.dailyPromptEnabled" :disabled="previewing || creating"><SelectTrigger id="broadcast-daily"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="any">Не учитывать</SelectItem><SelectItem value="true">Включены</SelectItem><SelectItem value="false">Выключены</SelectItem></SelectGroup></SelectContent></Select></Field>
             </FieldGroup>
+
+            <Field>
+              <FieldLabel for="broadcast-action">Кнопка в сообщении</FieldLabel>
+              <Select v-model="form.messageAction" :disabled="previewing || creating">
+                <SelectTrigger id="broadcast-action"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectGroup>
+                  <SelectItem value="none">Без кнопки</SelectItem>
+                  <SelectItem value="open_schedule">Настроить расписание</SelectItem>
+                </SelectGroup></SelectContent>
+              </Select>
+              <FieldDescription>Кнопка не меняет выбранную аудиторию.</FieldDescription>
+            </Field>
 
             <Field>
               <FieldLabel id="broadcast-mode-label">Когда отправить</FieldLabel>
@@ -168,10 +213,16 @@ function formatUtc(value: string) {
 
     <Card v-if="previewIsCurrent && preview">
       <CardHeader><CardTitle class="flex items-center gap-2"><Megaphone />Предпросмотр готов</CardTitle><CardDescription>Результат предварительный: при создании сервер заново зафиксирует актуальную аудиторию.</CardDescription></CardHeader>
-      <CardContent class="grid gap-4 md:grid-cols-3">
+      <CardContent class="flex flex-col gap-4">
+        <div><p class="text-sm text-muted-foreground">Текст</p><p class="whitespace-pre-wrap break-words rounded-lg border p-4 text-sm">{{ preview.normalized.content }}</p></div>
+        <div><p class="text-sm text-muted-foreground">Фильтры</p><p>{{ broadcastFilterSummary(preview.normalized.filters) }}</p></div>
+        <div class="grid gap-4 md:grid-cols-5">
         <div><p class="text-sm text-muted-foreground">Получателей</p><p class="text-2xl font-semibold">{{ preview.audienceCount }}</p></div>
         <div><p class="text-sm text-muted-foreground">Москва</p><p>{{ preview.normalized.scheduledFor ?? 'Сразу' }}</p></div>
         <div><p class="text-sm text-muted-foreground">UTC instant</p><p>{{ formatUtc(preview.normalized.scheduledAt) }}</p></div>
+        <div><p class="text-sm text-muted-foreground">Кнопка</p><p>{{ broadcastActionLabel(preview.normalized.messageAction) }}</p></div>
+        <div><p class="text-sm text-muted-foreground">Расчёт аудитории</p><p>{{ formatUtc(preview.evaluatedAt) }}</p></div>
+        </div>
       </CardContent>
       <CardFooter class="justify-end"><Button :disabled="creating || !canCreate" @click="confirmOpen = true"><Send data-icon="inline-start" />Создать рассылку</Button></CardFooter>
     </Card>

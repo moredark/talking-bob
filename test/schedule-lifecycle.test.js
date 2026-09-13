@@ -22,6 +22,7 @@ test("startup normalization canonicalizes disabled legacy users without delivery
       dailyPromptHour: 99,
       dailyPromptMinute: -1,
       dailyPromptEnabled: false,
+      promptWeekdaysMask: 127,
       nextPromptAt: null,
     },
     {
@@ -30,6 +31,7 @@ test("startup normalization canonicalizes disabled legacy users without delivery
       dailyPromptHour: 9,
       dailyPromptMinute: 30,
       dailyPromptEnabled: false,
+      promptWeekdaysMask: 127,
       nextPromptAt: new Date("2026-08-07T13:30:00.000Z"),
     },
     {
@@ -38,6 +40,7 @@ test("startup normalization canonicalizes disabled legacy users without delivery
       dailyPromptHour: 13,
       dailyPromptMinute: 0,
       dailyPromptEnabled: true,
+      promptWeekdaysMask: 127,
       nextPromptAt: null,
     },
   ];
@@ -87,6 +90,7 @@ test("startup normalization canonicalizes disabled legacy users without delivery
     dailyPromptHour: 13,
     dailyPromptMinute: 0,
     dailyPromptEnabled: false,
+    promptWeekdaysMask: 127,
     nextPromptAt: null,
   });
   assert.equal(rows[1].timezone, aliasCanonical);
@@ -134,6 +138,7 @@ test("schedule repair selects only enabled missing slots, repairs invalid values
           timezone: "Not/A_Timezone",
           dailyPromptHour: 99,
           dailyPromptMinute: -1,
+          promptWeekdaysMask: 127,
         },
       ];
     },
@@ -209,6 +214,7 @@ test("settings lock, canonicalization, and next slot update share one transactio
     dailyPromptHour: 13,
     dailyPromptMinute: 0,
     timezone: DEFAULT_USER_TIMEZONE,
+    promptWeekdaysMask: 42,
   };
   const updates = [];
   let transactions = 0;
@@ -255,6 +261,7 @@ test("settings lock, canonicalization, and next slot update share one transactio
       dailyPromptHour: 9,
       dailyPromptMinute: 30,
       timezone: canonical,
+      promptWeekdaysMask: 42,
       nextPromptAt: new Date("2026-08-06T13:30:00.000Z"),
     },
   });
@@ -273,6 +280,7 @@ test("timezone schedule update and streak reschedule share rollback and one tran
     dailyPromptHour: 13,
     dailyPromptMinute: 0,
     timezone: "Europe/Moscow",
+    promptWeekdaysMask: 42,
     nextPromptAt: new Date("2026-08-07T10:00:00.000Z"),
   };
 
@@ -342,6 +350,7 @@ test("disabling a schedule atomically clears nextPromptAt", async () => {
     dailyPromptHour: 13,
     dailyPromptMinute: 0,
     timezone: DEFAULT_USER_TIMEZONE,
+    promptWeekdaysMask: 42,
     nextPromptAt: new Date("2026-08-07T10:00:00.000Z"),
   };
   let update;
@@ -559,6 +568,7 @@ test("scheduled selection batches histories and applies the repeat window indepe
       id: "user-1",
       telegramId: 101n,
       timezone: "Europe/Moscow",
+      promptWeekdaysMask: 127,
       dailyPromptHour: 13,
       dailyPromptMinute: 0,
     },
@@ -566,6 +576,7 @@ test("scheduled selection batches histories and applies the repeat window indepe
       id: "user-2",
       telegramId: 202n,
       timezone: "Europe/Moscow",
+      promptWeekdaysMask: 127,
       dailyPromptHour: 13,
       dailyPromptMinute: 0,
     },
@@ -605,7 +616,7 @@ test("scheduled selection batches histories and applies the repeat window indepe
   }
 });
 
-test("catch-up collapses downtime to one latest occurrence and two workers conflict on its stable key", async () => {
+test("same-day recovery collapses downtime to today’s occurrence and two workers conflict on its stable key", async () => {
   const now = new Date("2024-01-05T12:00:00.000Z");
   const occurrenceKeys = new Set();
   const options = {
@@ -615,6 +626,7 @@ test("catch-up collapses downtime to one latest occurrence and two workers confl
         id: "user-1",
         telegramId: 123n,
         timezone: "Europe/Moscow",
+        promptWeekdaysMask: 127,
         dailyPromptHour: 13,
         dailyPromptMinute: 0,
       },
@@ -679,4 +691,65 @@ test("expired unattempted scheduled claim is reclaimed with the same row and a f
     calls.reclaimUpdates[0].data.claimExpiresAt.toISOString(),
     "2026-08-06T12:02:00.000Z",
   );
+});
+
+
+test("weekly schedule helpers skip unselected days and preserve local date", () => {
+  const { nextWeeklySlotAtOrAfter, weeklySlotOnDate } = require("../dist/shared/time/weekday-schedule");
+  const now = new Date("2026-08-07T09:00:00.000Z"); // Friday, 12:00 Moscow
+  const slot = nextWeeklySlotAtOrAfter(now, 13, 0, "Europe/Moscow", 1);
+  assert.equal(slot.localDate, "2026-08-10");
+  assert.equal(slot.instant.toISOString(), "2026-08-10T10:00:00.000Z");
+  assert.equal(weeklySlotOnDate({ year: 2026, month: 8, day: 7 }, 13, 0, "Europe/Moscow", 1), null);
+});
+
+test("weekly schedule helper handles a DST gap on the selected local date", () => {
+  const { weeklySlotOnDate } = require("../dist/shared/time/weekday-schedule");
+  const slot = weeklySlotOnDate({ year: 2026, month: 3, day: 8 }, 2, 30, "America/New_York", 64);
+  assert.equal(slot.localDate, "2026-03-08");
+  assert.equal(slot.instant.toISOString(), "2026-03-08T07:00:00.000Z");
+});
+
+test("weekly due processing advances without past-date claims on free days, before time, and with no catalogue", async () => {
+  for (const [instant, mask, prompts, expected] of [
+    ["2026-09-14T12:00:00Z", 21, [{ id: "p", topic: "t", audioFileId: null }], "2026-09-14T13:00:00.000Z"],
+    ["2026-09-15T14:00:00Z", 21, [{ id: "p", topic: "t", audioFileId: null }], "2026-09-16T13:00:00.000Z"],
+    ["2026-09-15T12:00:00Z", 127, [{ id: "p", topic: "t", audioFileId: null }], "2026-09-15T13:00:00.000Z"],
+    ["2026-09-14T14:00:00Z", 21, [], "2026-09-16T13:00:00.000Z"],
+  ]) {
+    const env = createClaimPrisma({ dueUsers: [{ id: "weekly", telegramId: 1n, timezone: "UTC", dailyPromptHour: 13, dailyPromptMinute: 0, promptWeekdaysMask: mask }], prompts });
+    assert.deepEqual(await new ScheduleService(env.prisma).claimScheduledBatch(1, new Date(instant)), []);
+    assert.equal(env.calls.insertSql.length, 0);
+    assert.equal(env.calls.userUpdates[0].data.nextPromptAt.toISOString(), expected);
+  }
+});
+
+test("weekly normalization preserves today's due slot and repairs a cursor on an unselected future date", async () => {
+  const now = new Date("2026-09-14T14:00:00Z");
+  const rows = [
+    { id: "due", timezone: "UTC", dailyPromptHour: 13, dailyPromptMinute: 0, dailyPromptEnabled: true, promptWeekdaysMask: 21, nextPromptAt: new Date("2026-09-14T13:00:00Z") },
+    { id: "wrong", timezone: "UTC", dailyPromptHour: 13, dailyPromptMinute: 0, dailyPromptEnabled: true, promptWeekdaysMask: 21, nextPromptAt: new Date("2026-09-15T13:00:00Z") },
+  ];
+  const writes = [];
+  const tx = { $queryRaw: async () => rows, user: { update: async ({ where, data }) => { writes.push({ where, data }); return data; } } };
+  const schedule = new ScheduleService({ $transaction: async fn => fn(tx) });
+  assert.equal(await schedule.normalizeAllSchedules(100, now), 1);
+  assert.equal(writes[0].where.id, "wrong");
+  assert.equal(writes[0].data.nextPromptAt.toISOString(), "2026-09-16T13:00:00.000Z");
+});
+
+test("legacy initialize and enable paths preserve weekly days, while an invalid mask rolls back", async () => {
+  let row = { id: "weekly", timezone: "UTC", dailyPromptHour: 13, dailyPromptMinute: 0, dailyPromptEnabled: false, promptWeekdaysMask: 21, nextPromptAt: null };
+  let writes = 0;
+  const tx = { $queryRaw: async () => [{ ...row }], user: { update: async ({ data }) => { writes++; return row = { ...row, ...data }; } } };
+  const schedule = new ScheduleService({ $transaction: async fn => fn(tx) });
+  await schedule.initializeSchedule(row.id, 8, 45, "UTC");
+  assert.equal(row.promptWeekdaysMask, 21); assert.equal(row.nextPromptAt, null);
+  await schedule.enableSchedule(row.id);
+  assert.equal(row.promptWeekdaysMask, 21); assert.ok(row.nextPromptAt);
+  await schedule.disableSchedule(row.id);
+  assert.equal(row.promptWeekdaysMask, 21); assert.equal(row.nextPromptAt, null);
+  const savedWrites = writes;
+  await assert.rejects(schedule.updateScheduleSettings(row.id, { promptWeekdaysMask: 0 }), /mask/i);
+  assert.equal(writes, savedWrites);
 });

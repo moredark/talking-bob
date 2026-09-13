@@ -5,9 +5,11 @@ import { randomUUID } from "node:crypto";
 import AbortController from "abort-controller";
 import { PrismaService } from "../../infrastructure/database";
 import { ErrorLogService } from "../error-log";
-import { BROADCAST_LIMITS, BroadcastSendError, BroadcastSender } from "./broadcast.contracts";
+import { BROADCAST_LIMITS, BroadcastSendError, BroadcastSender, BroadcastMessageAction } from "./broadcast.contracts";
 
-type ClaimedRecipient = BroadcastRecipient & { content: string; claimToken: string };
+import { broadcastAudienceWhere, normalizeBroadcastFilters, normalizeBroadcastMessageAction } from "./broadcast-audience";
+
+type ClaimedRecipient = BroadcastRecipient & { content: string; claimToken: string; filters: Prisma.JsonValue; messageAction: string | null };
 
 @Injectable()
 export class BroadcastDispatcher {
@@ -154,7 +156,7 @@ export class BroadcastDispatcher {
       if (claims.length === 0) return [];
       const rows = await tx.broadcastRecipient.findMany({
         where: { id: { in: claims.map((claim) => claim.id) } },
-        include: { broadcast: { select: { content: true } } },
+        include: { broadcast: { select: { content: true, filters: true, messageAction: true } } },
       });
       const tokenById = new Map(claims.map((claim) => [claim.id, claim.token]));
       return rows.flatMap<ClaimedRecipient>((row) => {
@@ -162,7 +164,7 @@ export class BroadcastDispatcher {
         const content = row.broadcast.content;
         if (!token || content === null) return [];
         const { broadcast, ...recipient } = row;
-        return [{ ...recipient, content, claimToken: token }];
+        return [{ ...recipient, content, claimToken: token, filters: broadcast.filters, messageAction: broadcast.messageAction }];
       });
     });
     for (const claim of claimed) this.ownedClaims.set(claim.id, claim.claimToken);
@@ -171,13 +173,22 @@ export class BroadcastDispatcher {
 
   private async deliver(claim: ClaimedRecipient, sender: BroadcastSender, now: Date): Promise<void> {
     if (this.shutdownController.signal.aborted) return;
+    let messageAction: BroadcastMessageAction | null;
+    let audience: Prisma.UserWhereInput;
+    try {
+      const filters = normalizeBroadcastFilters(claim.filters);
+      messageAction = normalizeBroadcastMessageAction(claim.messageAction);
+      // Evaluate again for each attempt, including those waiting in this bounded batch.
+      audience = filters.noVoiceForDays !== undefined || filters.scheduledDeliveryWithinDays !== undefined
+        ? broadcastAudienceWhere(filters, new Date())
+        : { status: "active", bannedAt: null, announcementEnabled: true };
+    } catch {
+      await this.finishTerminal(claim, "failed", "invalid_broadcast_configuration", new Date());
+      this.releaseOwnedClaim(claim);
+      return;
+    }
     const eligible = await this.prisma.user.findFirst({
-      where: {
-        id: claim.userId,
-        status: "active",
-        bannedAt: null,
-        announcementEnabled: true,
-      },
+      where: { ...audience, id: claim.userId },
       select: { id: true },
     });
     if (this.shutdownController.signal.aborted) return;
@@ -203,7 +214,7 @@ export class BroadcastDispatcher {
     }
 
     try {
-      await sender.sendPlainText(claim.telegramIdSnapshot, claim.content, this.shutdownController.signal);
+      await sender.sendPlainText(claim.telegramIdSnapshot, claim.content, this.shutdownController.signal, { messageAction });
       if (this.shutdownController.signal.aborted) return;
       await this.finishTerminal(claim, "sent", null, new Date());
       this.releaseOwnedClaim(claim);

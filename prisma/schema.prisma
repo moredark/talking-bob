@@ -81,6 +81,7 @@ model User {
   telegramId            BigInt    @unique
   username              String?
   dailyPromptEnabled    Boolean   @default(true)
+  promptWeekdaysMask    Int       @default(127)
   announcementEnabled   Boolean   @default(true)
   lastUserMessageAt     DateTime? @db.Timestamptz(3)
   dailyPromptHour       Int       @default(13)
@@ -495,6 +496,7 @@ model Broadcast {
   id                String          @id @default(uuid()) @db.Uuid
   content           String?
   contentPurgedAt   DateTime?       @db.Timestamptz(3)
+  messageAction     String?         @db.VarChar(32)
   filters           Json
   mode              BroadcastMode
   scheduledForLocal String?         @db.VarChar(16)

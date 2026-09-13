@@ -1,7 +1,10 @@
 import { Prisma, User } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database";
 import {
-  nextSlotAtOrAfter,
+  nextWeeklySlotAtOrAfter,
+  weeklySlotOnDate,
+  getLocalDateParts,
+  validatePromptWeekdaysMask,
   resolveEffectiveTimeZone,
   validateScheduleTime,
 } from "../../shared/time";
@@ -16,6 +19,7 @@ interface RepairRow {
   timezone: string;
   dailyPromptHour: number;
   dailyPromptMinute: number;
+  promptWeekdaysMask: number;
 }
 
 interface NormalizationRow extends RepairRow {
@@ -31,6 +35,7 @@ interface NormalizationBatchResult {
 
 export interface ScheduleSettings {
   dailyPromptEnabled?: boolean;
+  promptWeekdaysMask?: number;
   dailyPromptHour?: number;
   dailyPromptMinute?: number;
   timezone?: string | null;
@@ -99,7 +104,8 @@ export class ScheduleSettingsOperations {
           "id",
           "timezone",
           "dailyPromptHour",
-          "dailyPromptMinute"
+          "dailyPromptMinute",
+          "promptWeekdaysMask"
         FROM "users"
         WHERE "dailyPromptEnabled" = true
           AND "nextPromptAt" IS NULL
@@ -116,11 +122,12 @@ export class ScheduleSettingsOperations {
           ? row.dailyPromptMinute
           : DEFAULT_PROMPT_MINUTE;
         const timezone = resolveEffectiveTimeZone(row.timezone).timeZone;
-        const nextPromptAt = nextSlotAtOrAfter(
+        const nextPromptAt = nextWeeklySlotAtOrAfter(
           now,
           hour,
           minute,
           timezone,
+          row.promptWeekdaysMask,
         ).instant;
 
         await tx.user.update({
@@ -153,6 +160,7 @@ export class ScheduleSettingsOperations {
           "timezone",
           "dailyPromptHour",
           "dailyPromptMinute",
+          "promptWeekdaysMask",
           "dailyPromptEnabled",
           "nextPromptAt"
         FROM "users"
@@ -184,13 +192,17 @@ export class ScheduleSettingsOperations {
         }
         if (!row.dailyPromptEnabled && row.nextPromptAt !== null) {
           data.nextPromptAt = null;
-        } else if (row.dailyPromptEnabled && row.nextPromptAt === null) {
-          data.nextPromptAt = nextSlotAtOrAfter(
-            now,
-            hour,
-            minute,
-            timezone,
-          ).instant;
+        } else if (row.dailyPromptEnabled) {
+          const cursorSlot = row.nextPromptAt
+            ? weeklySlotOnDate(getLocalDateParts(row.nextPromptAt, timezone), hour, minute, timezone, row.promptWeekdaysMask)
+            : null;
+          if (!cursorSlot || cursorSlot.instant.getTime() !== row.nextPromptAt?.getTime()) {
+            // Keep today's overdue work recoverable while never creating a past-day occurrence.
+            const today = weeklySlotOnDate(getLocalDateParts(now, timezone), hour, minute, timezone, row.promptWeekdaysMask);
+            data.nextPromptAt = row.nextPromptAt && row.nextPromptAt <= now && today && today.instant <= now
+              ? today.instant
+              : nextWeeklySlotAtOrAfter(now, hour, minute, timezone, row.promptWeekdaysMask).instant;
+          }
         }
 
         if (Object.keys(data).length > 0) {
@@ -230,6 +242,8 @@ export class ScheduleSettingsOperations {
       const hour = settings.dailyPromptHour ?? locked.dailyPromptHour;
       const minute = settings.dailyPromptMinute ?? locked.dailyPromptMinute;
       validateScheduleTime(hour, minute);
+      const mask = settings.promptWeekdaysMask ?? locked.promptWeekdaysMask;
+      validatePromptWeekdaysMask(mask);
 
       const timezone = resolveEffectiveTimeZone(
         settings.timezone === undefined ? locked.timezone : settings.timezone,
@@ -237,13 +251,14 @@ export class ScheduleSettingsOperations {
       const enabled =
         settings.dailyPromptEnabled ?? locked.dailyPromptEnabled;
       const nextPromptAt = enabled
-        ? nextSlotAtOrAfter(now, hour, minute, timezone).instant
+        ? nextWeeklySlotAtOrAfter(now, hour, minute, timezone, mask).instant
         : null;
 
       let updated = await tx.user.update({
         where: { id: userId },
         data: {
           dailyPromptEnabled: enabled,
+          promptWeekdaysMask: mask,
           dailyPromptHour: hour,
           dailyPromptMinute: minute,
           timezone,

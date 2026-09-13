@@ -61,8 +61,14 @@ flowchart LR
   санитизированные AI provider calls. AI traces очищаются через 30 дней.
 - Runtime settings используют typed allowlist: product overrides применяются
   hot, infrastructure overrides — после restart, readonly/secrets не изменяются.
-- Broadcast dispatcher хранит snapshot аудитории, повторно проверяет opt-out
-  перед Telegram I/O и использует bounded claims/retries.
+- Broadcast dispatcher хранит snapshot аудитории и использует bounded claims/retries.
+  Независимые optional периоды отсутствия голоса и получения scheduled-вопроса
+  соединяются с прежними фильтрами через AND. При активном новом периоде весь
+  предикат проверяется перед каждой попыткой; без периодов сохраняется прежняя
+  проверка consent/status/ban. Текст вводит администратор, optional действие
+  `open_schedule` сохраняется вместе с конфигурацией. Отдельного вида или шаблона нет.
+  Контракт: [schedule-reengagement](../../openspec/specs/schedule-reengagement/spec.md).
+  Порядок обновления и read-only gates: [runbook](../practice-schedule-rollout.md).
 - Analytics возвращает Moscow calendar buckets и retention-safe facts без raw
   сообщений, transcript, analysis или provider response.
 

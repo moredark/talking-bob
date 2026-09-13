@@ -239,6 +239,24 @@ test("effective status becomes zero exactly at D+2 expiry without losing the lon
   assert.equal(expired.active, false);
 });
 
+test("sparse prompt schedule does not alter daily streak qualification", async () => {
+  const prisma = createFakePrisma({ user: { promptWeekdaysMask: 21 } });
+  const service = new StreakService(prisma);
+  await qualify(service, prisma, "scheduled-mon", new Date("2026-08-03T10:00:00Z"));
+  await qualify(service, prisma, "scheduled-wed", new Date("2026-08-05T10:00:00Z"));
+  assert.equal(prisma.state.user.currentStreak, 1, "a skipped calendar day breaks the daily streak");
+  assert.equal(prisma.state.user.longestStreak, 1);
+});
+
+test("a completed manual session on a free scheduled day continues the streak", async () => {
+  const prisma = createFakePrisma({ user: { promptWeekdaysMask: 21 } });
+  const service = new StreakService(prisma);
+  await qualify(service, prisma, "scheduled-mon", new Date("2026-08-03T10:00:00Z"));
+  await qualify(service, prisma, "manual-tue", new Date("2026-08-04T10:00:00Z"));
+  assert.equal(prisma.state.user.currentStreak, 2);
+  assert.equal(prisma.state.user.lastStreakLocalDate.toISOString(), "2026-08-04T00:00:00.000Z");
+});
+
 test("qualification canonicalizes timezone aliases while keeping database dates at UTC midnight", async () => {
   const prisma = createFakePrisma({ user: { timezone: "US/Eastern" } });
   const service = new StreakService(prisma);
@@ -351,6 +369,16 @@ test("reminder claims are unique, reclaim expired leases, retry with backoff, an
   assert.equal(prisma.state.reminders[0].status, "failed");
   assert.equal(prisma.state.user.nextStreakReminderAt, null);
   assert.deepEqual(await service.claimDueReminders(10, new Date("2026-08-02T22:00:00Z")), []);
+});
+
+test("enabled streak reminder remains eligible on a free prompt day", async () => {
+  const prisma = createFakePrisma({ user: { promptWeekdaysMask: 21, streakReminderEnabled: true } });
+  const service = new StreakService(prisma);
+  await qualify(service, prisma, "manual-mon", new Date("2026-08-03T10:00:00Z"));
+  const [claim] = await service.claimDueReminders(1, new Date("2026-08-04T21:00:00Z"));
+  assert.ok(claim, "streak reminder is independent from prompt weekdays");
+  const attempt = await service.beginReminderAttempt(claim, new Date("2026-08-04T21:00:00Z"));
+  assert.equal(attempt.currentStreak, 1);
 });
 
 test("an expired attempted reminder lease is terminal while an unattempted lease is reclaimable", async () => {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { broadcastFilterSummary, broadcastActionLabel } from "../lib/broadcast-summary";
 import { onMounted, reactive, ref } from "vue";
 import { Eye, Megaphone, Plus, RotateCcw, Search } from "@lucide/vue";
 import { useRouter } from "vue-router";
@@ -148,7 +149,7 @@ onMounted(() => load(1));
               <TableRow v-for="row in broadcasts" v-else :key="row.id">
                 <TableCell><Badge :variant="statusVariant(row.status)">{{ statusLabel(row.status) }}</Badge></TableCell>
                 <TableCell>{{ row.mode === 'immediate' ? 'Сразу' : row.scheduledFor }}<p class="text-xs text-muted-foreground">{{ formatDate(row.scheduledAt) }}</p></TableCell>
-                <TableCell>{{ row.counts.total }}</TableCell>
+                <TableCell class="min-w-64">{{ row.counts.total }}<p class="text-xs text-muted-foreground">{{ broadcastFilterSummary(row.filters) }}</p><p class="text-xs">{{ broadcastActionLabel(row.messageAction) }}</p></TableCell>
                 <TableCell>{{ row.counts.sent }}</TableCell>
                 <TableCell>{{ row.counts.failed + row.counts.ambiguous }}</TableCell>
                 <TableCell>{{ formatDate(row.createdAt) }}</TableCell>
