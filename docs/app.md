@@ -115,6 +115,14 @@ failure with `/report` retry guidance; it never saves a fallback as a completed 
 
 The readiness system prompt is stored as `agent_prompt_rules.readinessPrompt` beside the shared follow-up and analysis prompts. It is loaded in the same personality snapshot and can be edited under **Common rules** in the admin UI; the application code only builds the conversation evidence payload and validates the configured JSON response.
 
+The default analysis rules treat learner text as an automatic speech transcript:
+feedback and scores concern spoken grammar, vocabulary, naturalness, and clarity,
+excluding capitalization, punctuation, spelling, apostrophes, and sentence
+boundaries. Suspected transcription artifacts are not treated as learner errors;
+valid grammar is not presented as incorrect, and optional stylistic improvements
+do not lower the score. These defaults apply to newly seeded shared rules and
+the built-in analysis prompts. Seeding preserves existing rules edited in admin.
+
 Report formatting, chunk delivery, and definite/ambiguous delivery failures
 are specified in the [report-delivery contract](../openspec/specs/report-delivery/spec.md).
 
