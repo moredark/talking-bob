@@ -100,7 +100,7 @@ export class ReportHandler {
     }
     const result = await this.responseService.claimGeneration({
       userId: user.id, userPromptId: userPrompt.id,
-      voiceFileId: messages.find((m) => m.role === "user")?.voiceFileId ?? "",
+      voiceFileId: messages.find((m) => m.role === "user" && m.voiceFileId)?.voiceFileId ?? null,
       generationRequestKey: requestKey,
       ...(expectedLastMessageId ? { expectedLastMessageId } : {}),
     });
@@ -108,7 +108,7 @@ export class ReportHandler {
       await ctx.reply("Диалог изменился во время обработки. Отправьте /report ещё раз."); return;
     }
     if (result.outcome === "no_messages") {
-      await ctx.reply("Вы ещё не отправили ни одного голосового сообщения в этом разговоре."); return;
+      await ctx.reply("Вы ещё не ответили в этом разговоре. Отправьте ответ голосом или текстом."); return;
     }
     if (result.outcome === "missing_prompt") {
       await ctx.reply("Нет активного разговора. Отправьте /start для начала."); return;

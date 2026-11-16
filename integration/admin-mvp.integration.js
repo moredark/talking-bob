@@ -52,6 +52,8 @@ const EXPECTED_MIGRATIONS = [
   "20260910120000_add_readiness_prompt",
   "20260910130000_refine_readiness_prompt",
   "20260913120000_practice_schedule_and_broadcast_options",
+  "20261116120000_text_practice_replies",
+  "20261116130000_reply_usage_metrics",
 ];
 
 const prisma = new PrismaClient();
@@ -204,7 +206,7 @@ test("Admin MVP PostgreSQL rollout journey", async (t) => {
     const prompt = await prisma.prompt.create({ data: { topic: "broadcast-" + randomUUID(), textContent: "scheduled" } });
     async function candidate(voice, sentAt, source = "scheduled", status = "sent") {
       const row = await createUser(); owned.push(row.id);
-      await prisma.user.update({ where: { id: row.id }, data: { dailyPromptEnabled: true, lastUserMessageAt: voice } });
+      await prisma.user.update({ where: { id: row.id }, data: { dailyPromptEnabled: true, lastUserMessageAt: voice, lastVoiceMessageAt: voice } });
       if (sentAt) {
         const date = sentAt.toISOString().slice(0, 10);
         await prisma.userPrompt.create({ data: {

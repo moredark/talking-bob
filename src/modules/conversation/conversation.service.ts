@@ -10,17 +10,17 @@ import { StreakService } from "../streak";
 
 const GENERATION_LEASE_MS = 30 * 60 * 1000;
 
-export interface AcceptVoiceData {
+export interface AcceptReplyData {
   userId: string;
   userPromptId: string;
   content: string;
-  voiceFileId: string;
+  voiceFileId?: string;
   telegramUpdateId: bigint;
   generationRequestKey: string;
   readiness?: { ready: boolean; expectedLastMessageId: string | null };
 }
 
-export type VoicePrecheckResult =
+export type ReplyPrecheckResult =
   | { outcome: "accept" }
   | { outcome: "duplicate"; message: PrismaConversationMessage }
   | { outcome: "closed" };
@@ -33,7 +33,7 @@ export interface ConversationGenerationClaim {
   claimExpiresAt: Date;
 }
 
-export type AcceptVoiceResult =
+export type AcceptReplyResult =
   | { outcome: "stale" }
   | { outcome: "duplicate"; message: PrismaConversationMessage }
   | { outcome: "closed" }
@@ -56,10 +56,10 @@ export class ConversationService {
   ) {}
 
   /** Cheap read-only gate. The locked accept method is authoritative. */
-  async precheckVoiceAcceptance(
+  async precheckReplyAcceptance(
     userPromptId: string,
     telegramUpdateId?: bigint,
-  ): Promise<VoicePrecheckResult> {
+  ): Promise<ReplyPrecheckResult> {
     if (telegramUpdateId !== undefined) {
       const duplicate = await this.prisma.conversationMessage.findUnique({
         where: { telegramUpdateId },
@@ -76,9 +76,9 @@ export class ConversationService {
   }
 
   /** Atomically accepts a turn; third and later turns close only when ready. */
-  async acceptVoiceAndMaybeClaimGeneration(
-    data: AcceptVoiceData,
-  ): Promise<AcceptVoiceResult> {
+  async acceptReplyAndMaybeClaimGeneration(
+    data: AcceptReplyData,
+  ): Promise<AcceptReplyResult> {
     return this.prisma.$transaction(async (tx) => {
       const prompt = await this.lockUserPrompt(tx, data.userPromptId);
       if (!prompt || prompt.userId !== data.userId) return { outcome: "closed" };
@@ -101,7 +101,7 @@ export class ConversationService {
           userPromptId: data.userPromptId,
           role: "user",
           content: data.content,
-          voiceFileId: data.voiceFileId,
+          voiceFileId: data.voiceFileId ?? null,
           telegramUpdateId: data.telegramUpdateId,
         },
       });
@@ -115,6 +115,15 @@ export class ConversationService {
         },
         data: { lastUserMessageAt: message.createdAt },
       });
+      if (data.voiceFileId) {
+        await tx.user.updateMany({
+          where: {
+            id: data.userId,
+            OR: [{ lastVoiceMessageAt: null }, { lastVoiceMessageAt: { lt: message.createdAt } }],
+          },
+          data: { lastVoiceMessageAt: message.createdAt },
+        });
+      }
       await tx.userPrompt.updateMany({
         where: {
           id: data.userPromptId,
@@ -128,14 +137,18 @@ export class ConversationService {
       const localDate = getLocalDateKey(message.createdAt, "Europe/Moscow");
       await tx.$executeRaw`
         INSERT INTO "user_activity_days" (
-          "userId", "localDate", "firstActivityAt", "lastActivityAt", "messageCount"
+          "userId", "localDate", "firstActivityAt", "lastActivityAt", "messageCount",
+          "textMessageCount", "voiceMessageCount"
         ) VALUES (
-          ${data.userId}, ${localDate}::date, ${message.createdAt}, ${message.createdAt}, 1
+          ${data.userId}, ${localDate}::date, ${message.createdAt}, ${message.createdAt}, 1,
+          ${data.voiceFileId ? 0 : 1}, ${data.voiceFileId ? 1 : 0}
         )
         ON CONFLICT ("userId", "localDate") DO UPDATE SET
           "firstActivityAt" = LEAST("user_activity_days"."firstActivityAt", EXCLUDED."firstActivityAt"),
           "lastActivityAt" = GREATEST("user_activity_days"."lastActivityAt", EXCLUDED."lastActivityAt"),
-          "messageCount" = "user_activity_days"."messageCount" + 1
+          "messageCount" = "user_activity_days"."messageCount" + 1,
+          "textMessageCount" = "user_activity_days"."textMessageCount" + EXCLUDED."textMessageCount",
+          "voiceMessageCount" = "user_activity_days"."voiceMessageCount" + EXCLUDED."voiceMessageCount"
       `;
       const userMessageCount = await tx.conversationMessage.count({
         where: { userPromptId: data.userPromptId, role: "user" },
@@ -172,7 +185,7 @@ export class ConversationService {
             data: {
               userId: data.userId,
               userPromptId: data.userPromptId,
-              voiceFileId: firstUserMessage?.voiceFileId ?? data.voiceFileId,
+              voiceFileId: firstUserMessage?.voiceFileId ?? data.voiceFileId ?? null,
               generationRequestKey: data.generationRequestKey,
               generationClaimToken: claimToken,
               generationClaimExpiresAt: claimExpiresAt,

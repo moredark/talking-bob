@@ -172,12 +172,11 @@ test("production modules wire SpeechKit through TTS_SERVICE into the voice handl
   const { TTS_SERVICE } = require("../dist/modules/ai/interfaces/tts.interface");
   const { TelegramModule } = require("../dist/modules/telegram/telegram.module");
   const { SpokenReplyService } = require("../dist/modules/telegram/spoken-reply.service");
-  const { VoiceHandler } = require("../dist/modules/telegram/handlers/voice.handler");
   const providers = Reflect.getMetadata(MODULE_METADATA.PROVIDERS, AiModule);
   assert.equal(providers.find((provider) => provider.provide === TTS_SERVICE).useClass, YandexTtsService);
   assert.ok(Reflect.getMetadata(MODULE_METADATA.EXPORTS, AiModule).includes(TTS_SERVICE));
   assert.ok(Reflect.getMetadata(MODULE_METADATA.IMPORTS, TelegramModule).includes(AiModule));
   assert.ok(Reflect.getMetadata(MODULE_METADATA.PROVIDERS, TelegramModule).includes(SpokenReplyService));
-  assert.ok(Reflect.getMetadata("design:paramtypes", VoiceHandler).includes(SpokenReplyService));
+  assert.ok(Reflect.getMetadata("design:paramtypes", require("../dist/modules/telegram/practice-reply-workflow.service").PracticeReplyWorkflowService).includes(SpokenReplyService));
   assert.deepEqual(Reflect.getMetadata(SELF_DECLARED_DEPS_METADATA, SpokenReplyService), [{ index: 0, param: TTS_SERVICE }]);
 });

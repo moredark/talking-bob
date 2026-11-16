@@ -187,3 +187,21 @@ test("review fixes preserve partial datasets, Moscow dates, summaries, and touch
     3,
   );
 });
+
+test("reply usage joins the existing dashboard period with explicit overlap and coverage", () => {
+  const page = read("src/pages/DashboardPage.vue");
+  const section = read("src/components/analytics/ReplyUsageSection.vue");
+  const types = read("src/types/index.ts");
+  assert.match(page, /<ReplyUsageSection[^>]*:usage="analytics\.replyUsage"/);
+  assert.match(types, /replyUsage: ReplyUsageMetrics &/);
+  assert.match(section, /Пользовались текстом/);
+  assert.match(section, /Пользовались голосом/);
+  assert.match(section, /Использовали оба формата/);
+  assert.match(section, /Доля пользователей текста/);
+  assert.match(section, /Пользователи обоих форматов входят в обе группы/);
+  assert.match(section, /Период покрыт частично/);
+  assert.match(section, /Учёт форматов с/);
+  assert.match(section, /textSharePct === null/);
+  assert.match(section, /принятых ответов с известным форматом нет/);
+  assert.match(section, /<AccessibleDataTable[^>]*:rows="rows"[^>]*compact/);
+});

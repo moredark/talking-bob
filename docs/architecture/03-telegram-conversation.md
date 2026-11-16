@@ -12,7 +12,7 @@
 варианта (09:00, 13:00, 18:00) и короткий ввод своего времени: в личном чате
 ровно `ЧЧ:ММ` от того же sender принимается в течение 10 минут. Этот
 Временный контекст хранится в памяти процесса, не является conversation state,
-не пишется в БД, завершается после успеха и отменяется slash-командой или callback вне меню времени. Ошибки допускают повтор до истечения срока. Голос всегда, а обычный текст вне этого окна идут по существующей маршрутизации. Сохранение
+не пишется в БД, завершается после успеха и отменяется slash-командой или callback вне меню времени. Ошибки допускают повтор до истечения срока. Голос всегда, а обычный текст вне этого окна идут в практику. Сохранение
 передаёт только изменяемые настройки в `ScheduleService`. После выбора редких
 дней или ручного режима отдельные действия вызывают существующий
 `StreakService`.
@@ -23,7 +23,7 @@
 
 ## Входной конвейер
 
-`TelegramService` регистрирует команды, voice update и callback handlers, а
+`TelegramService` регистрирует команды, voice/text updates и callback handlers, а
 затем запускает `@grammyjs/runner` с ограниченной глобальной конкуренцией.
 Updates одного чата проходят последовательно; разные чаты могут обрабатываться
 параллельно. Callback acknowledgement начинается до последовательной бизнес-
@@ -40,7 +40,7 @@ Updates одного чата проходят последовательно; �
 | --- | --- | --- |
 | `/start` | `StartHandler` | User, Prompt, RateLimit, Schedule, Dispatcher |
 | `new_question` | `StartHandler.handleNewQuestion` | тот же flow без welcome |
-| voice message | `VoiceHandler` | User, Prompt, Conversation, RateLimit, Whisper, LLM, ReportWorkflow |
+| voice / text message | `VoiceHandler` / `TextHandler` → `PracticeReplyWorkflowService` | User, Prompt, Conversation, RateLimit, LLM, ReportWorkflow; Whisper только для голоса |
 | `/report`, `report` callback | `ReportHandler` | Admission, Response claim, ReportWorkflow |
 | `/settings` и settings callbacks | `SettingsHandler` | User, Schedule, Streak |
 
@@ -86,14 +86,17 @@ manual и scheduled вопросов общая; недавние reservations �
 предварительно занятый quota slot освобождается. После сохранённого claim
 Telegram failure quota уже не возвращает.
 
-## Голосовой turn
+## Учебный turn: голос или текст
 
-`VoiceHandler` сначала выполняет дешёвые проверки Telegram metadata и
-conversation state. Только затем он занимает rolling quota, скачивает файл с
-ограничением времени/размера и вызывает Whisper через интерфейс
-`IWhisperService`.
+`VoiceHandler` проверяет аудиометаданные и предоставляет общему
+`PracticeReplyWorkflowService` ограниченную загрузку/Whisper. `TextHandler`
+проверяет и нормализует текст без аудио-I/O. Общий workflow выполняет preflight,
+квоту, personality, readiness, приём turn, follow-up или передачу report claim.
+Текстовый маршрут зарегистрирован после команд и ввода времени; callback и
+same-chat FIFO остаются в `TelegramService`. Поведение и ограничения:
+[text-practice-replies](../../openspec/specs/text-practice-replies/spec.md).
 
-`ConversationService.acceptVoiceAndMaybeClaimGeneration` повторно проверяет
+`ConversationService.acceptReplyAndMaybeClaimGeneration` повторно проверяет
 состояние под row lock и атомарно:
 
 - подавляет duplicate update по `telegramUpdateId`;
@@ -118,7 +121,7 @@ message с использованным снимком истории под б�
 ```mermaid
 sequenceDiagram
     actor U as Пользователь
-    participant V as VoiceHandler
+    participant V as PracticeReplyWorkflowService (voice input)
     participant Q as RateLimitService
     participant C as ConversationService
     participant S as StreakService
@@ -133,7 +136,7 @@ sequenceDiagram
     V->>Q: consumeLimit(voice_response)
     V->>TG: bounded file download
     V->>W: transcribe(bytes)
-    V->>C: acceptVoiceAndMaybeClaimGeneration
+    V->>C: acceptReplyAndMaybeClaimGeneration
     C->>DB: lock UserPrompt + atomic message/state transition
     alt turn 1, 2 или недостаточно информации
         V->>L: generateFollowUp(history)
@@ -152,7 +155,7 @@ sequenceDiagram
 outcomes (`no_messages`, `busy`, retention). Generation claim или сохранённый
 `UserResponse` он передаёт в `ReportWorkflowService`; delivery claim для
 сохранённого ответа workflow получает сам. Для автоматического отчёта третьего
-turn `VoiceHandler` вызывает тот же workflow напрямую; handler-to-handler
+turn `PracticeReplyWorkflowService` вызывает тот же report workflow напрямую; handler-to-handler
 зависимости нет.
 
 `UserResponse` — durable owner генерации. Автоматический owner создаётся внутри

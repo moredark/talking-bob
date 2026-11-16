@@ -1,3 +1,4 @@
+const { createVoiceHandler } = require("./support/practice-reply-test-harness");
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
@@ -157,7 +158,7 @@ test("deterministic user journey reaches an automatic report and a non-repeating
       telegramFileDownload: { timeoutMs: 100, maxResponseBytes: 1024 },
     },
   };
-  const voiceHandler = new VoiceHandler(
+  const voiceHandler = createVoiceHandler(
     userService,
     promptService,
     conversationService,
@@ -473,4 +474,57 @@ test("administrator configures outreach and user chooses a weekly schedule then 
   assert.equal(db.state.userPrompts[0].source, "manual");
   assert.equal(current().promptWeekdaysMask, 21);
   assert.equal(current().streakReminderEnabled, false);
+});
+
+for (const mode of ["text", "mixed"]) {
+  test(`${mode} practice reaches an automatic report, reuses it and starts the next question`, async (t) => {
+    const { createTextPractice } = require("./support/text-practice-test-harness");
+    const s = createTextPractice();
+    t.mock.method(global, "fetch", async () => new Response("audio"));
+    const answers = ["I visited Rome.", "I enjoyed the food.", "I want to visit again."];
+    for (let index = 0; index < answers.length; index++) {
+      const ctx = s.context(index + 1, answers[index]);
+      if (mode === "mixed" && index === 1) {
+        delete ctx.message.text; ctx.message.voice = { file_id: "mixed-voice", duration: 1 };
+        await s.voice.handle(ctx); answers[index] = "I visited Rome. I liked the food.";
+      } else await s.text.handle(ctx);
+    }
+    assert.equal(s.calls.followUp.length, 2); assert.equal(s.calls.readiness.length, 1);
+    assert.equal(s.calls.qualified, 1); assert.equal(s.calls.analyses.length, 1);
+    const response = s.prisma.state.userResponses[0];
+    assert.equal(response.transcript, answers.join(" "));
+    assert.equal(response.voiceFileId, mode === "mixed" ? "mixed-voice" : null);
+    assert.equal(response.generationStatus, "generated");
+    assert.match(s.replies.at(-1).message, /Стрик/);
+    await s.report.handle(s.context(4, "/report")); assert.equal(s.calls.analyses.length, 1); assert.equal(s.calls.qualified, 1);
+    const schedule = new ScheduleService(s.prisma), dispatcher = new DailyPromptDispatcher(schedule);
+    dispatcher.setBot({ api: { sendMessage: async () => {}, sendVoice: async () => {} } });
+    const quota = { consumeCalendarDayLimit: async () => ({ allowed: true, requestId: "next" }), releaseAction: async () => {} };
+    const start = new StartHandler(s.user, quota, s.prompt, schedule, dispatcher);
+    await start.handleNewQuestion(s.context(5));
+    assert.equal(s.prisma.state.userPrompts.length, 2); assert.equal(s.prisma.state.userPrompts[1].promptId, "next");
+  });
+}
+test("manual command and callback report after one text reply require no voice", async () => {
+  const { createTextPractice } = require("./support/text-practice-test-harness");
+  for (const callback of [false, true]) {
+    const s = createTextPractice(); await s.text.handle(s.context(1));
+    const ctx = s.context(2, "/report");
+    if (callback) { delete ctx.message; ctx.callbackQuery = { id: "report-callback", data: "report" }; }
+    await s.report.handle(ctx);
+    assert.equal(s.calls.analyses.length, 1); assert.equal(s.calls.qualified, 1);
+    assert.equal(s.prisma.state.userResponses[0].voiceFileId, null);
+    assert.equal(s.calls.whisper, 0);
+  }
+});
+
+test("manual mixed report keeps the first voice id after an earlier typed reply", async (t) => {
+  const { createTextPractice } = require("./support/text-practice-test-harness");
+  const s = createTextPractice();
+  t.mock.method(global, "fetch", async () => new Response("audio"));
+  await s.text.handle(s.context(1, "I visited Rome."));
+  const voice = s.context(2); delete voice.message.text; voice.message.voice = { file_id: "first-real-voice", duration: 1 };
+  await s.voice.handle(voice); await s.report.handle(s.context(3, "/report"));
+  assert.equal(s.prisma.state.userResponses[0].voiceFileId, "first-real-voice");
+  assert.equal(s.calls.qualified, 1); assert.equal(s.calls.analyses.length, 1);
 });

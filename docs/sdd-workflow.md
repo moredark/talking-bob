@@ -6,7 +6,8 @@ OpenSpec подключён для локальной работы с Codex: CLI
 Также поддерживаются контракты [расписания](../openspec/specs/practice-scheduling/spec.md),
 [гибкой рассылки](../openspec/specs/schedule-reengagement/spec.md) и
 [объяснения стрика](../openspec/specs/streak-schedule-guidance/spec.md).
-Сам алгоритм стрика остаётся в `docs/app.md`.
+Текстовые и смешанные ответы описаны в [text-practice-replies](../openspec/specs/text-practice-replies/spec.md).
+Сам календарный алгоритм стрика остаётся в `docs/app.md`.
 
 ## Установка и повторная настройка
 

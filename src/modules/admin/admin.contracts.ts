@@ -327,6 +327,11 @@ export type RetentionPoint = { retainedUsers: number; ratePct: number | null };
 export type RetentionSummary = { eligibleUsers: number; retainedUsers: number; ratePct: number };
 export type TokenUsage = { callsWithUsage: number; sum: number | null; usageCoveragePct: number | null };
 
+export interface ReplyUsageMetrics {
+  users: { total: number; text: number; voice: number; mixed: number; textSharePct: number | null };
+  replies: { total: number; text: number; voice: number };
+}
+
 export interface AdminAnalytics {
   version: 1;
   generatedAt: Date;
@@ -337,6 +342,10 @@ export interface AdminAnalytics {
     status: "complete" | "partial" | "unavailable";
     completeFrom: Date;
     incompleteBefore: Date | null;
+  };
+  replyUsage: ReplyUsageMetrics & {
+    coverage: { status: "complete" | "partial" | "unavailable"; completeFrom: Date; incompleteBefore: Date | null };
+    daily: Array<ReplyUsageMetrics & { localDate: string }>;
   };
   daily: Array<{
     localDate: string; startAt: Date; endAt: Date;

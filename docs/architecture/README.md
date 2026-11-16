@@ -44,6 +44,7 @@ Prisma-схему или operational runbook.
 | Что нужно узнать | Нормативный источник |
 | --- | --- |
 | Команды, лимиты, сообщения, env и поведение вне перенесённых OpenSpec-контрактов | [Application contract](../app.md) |
+| Текстовые и смешанные ответы, квота, отчёт, квалификация и метрики форматов | [OpenSpec text-practice-replies](../../openspec/specs/text-practice-replies/spec.md) |
 | Доставка сохранённого отчёта: повторы, части, ошибки и недоступность после retention | [OpenSpec report-delivery](../../openspec/specs/report-delivery/spec.md) |
 | Команды расписания, дни, время и восстановление вопросов | [OpenSpec practice-scheduling](../../openspec/specs/practice-scheduling/spec.md) |
 | Независимые фильтры обычной рассылки и optional кнопка | [OpenSpec schedule-reengagement](../../openspec/specs/schedule-reengagement/spec.md) |

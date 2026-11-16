@@ -4,3 +4,4 @@ export { ReportHandler } from "./report.handler";
 export { SettingsHandler } from "./settings.handler";
 
 export { ScheduleHandler } from "./schedule.handler";
+export { TextHandler } from "./text.handler";

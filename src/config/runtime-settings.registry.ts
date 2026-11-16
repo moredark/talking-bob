@@ -23,8 +23,8 @@ const integer = (key: string, group: "product" | "infrastructure", description: 
 });
 
 const RUNTIME_SETTINGS_BASE = [
-  integer("VOICE_RESPONSE_MAX_REQUESTS", "product", "Voice responses per rolling window", RATE_LIMITS.voice_response.maxRequests, 1, 1000),
-  integer("VOICE_RESPONSE_WINDOW_MINUTES", "product", "Voice response rolling window", RATE_LIMITS.voice_response.windowMinutes, 1, 10080),
+  integer("VOICE_RESPONSE_MAX_REQUESTS", "product", "Practice replies per rolling window (voice and text)", RATE_LIMITS.voice_response.maxRequests, 1, 1000),
+  integer("VOICE_RESPONSE_WINDOW_MINUTES", "product", "Practice reply rolling window (voice and text)", RATE_LIMITS.voice_response.windowMinutes, 1, 10080),
   integer("COMMAND_MAX_REQUESTS", "product", "Commands per rolling window", RATE_LIMITS.command.maxRequests, 1, 1000),
   integer("COMMAND_WINDOW_MINUTES", "product", "Command rolling window", RATE_LIMITS.command.windowMinutes, 1, 10080),
   integer("DIALOGS_PER_DAY", "product", "Dialogs per Moscow calendar day", RATE_LIMITS.dialog_start.maxRequests, 1, 1000),

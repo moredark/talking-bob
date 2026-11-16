@@ -4,7 +4,7 @@ const { spawn, spawnSync } = require("node:child_process");
 
 const POSTGRES_IMAGE =
   "postgres:16.13-trixie@sha256:5d143123fdf80462d1778cd4f24b9f7ca13c87174bca19141fb194c5a1ebca59";
-const LATEST_MIGRATION = "20260913120000_practice_schedule_and_broadcast_options";
+const LATEST_MIGRATION = "20261116130000_reply_usage_metrics";
 const ALL_MIGRATIONS = [
   "20260118172424",
   "20260124153443_add_conversation_messages",
@@ -30,6 +30,8 @@ const ALL_MIGRATIONS = [
   "20260910120000_add_readiness_prompt",
   "20260910130000_refine_readiness_prompt",
   "20260913120000_practice_schedule_and_broadcast_options",
+  "20261116120000_text_practice_replies",
+  "20261116130000_reply_usage_metrics",
 ];
 const PRE_LIFECYCLE_MIGRATIONS = [
   "20260118172424",
@@ -698,6 +700,7 @@ async function main() {
   const practiceUrl = databaseUrlFor(practiceDatabase, port);
   await migrate(practiceUrl);
   await run(process.execPath, ["--test", "integration/practice-schedule.integration.js"], { ...env, DATABASE_URL: practiceUrl });
+  await run(process.execPath, ["--test", "integration/reply-usage.integration.js"], { ...env, DATABASE_URL: practiceUrl });
   await verifyDumpAndRestore();
   await verifyLegacyTimezoneMatrix(port);
 }

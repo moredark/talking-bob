@@ -85,3 +85,12 @@ test("retry uses a fresh full predicate and skips a user who no longer matches",
   assert.equal(s.sends.length, 1);
   assert.equal(s.updates.at(-1).data.status, "skipped");
 });
+
+test("text-only activity remains eligible for voice absence before delayed send", async () => {
+  const s = subject({ user: { id: IDS.user, lastUserMessageAt: NOW, lastVoiceMessageAt: null } });
+  const filters = { languageLevels: [], activity: "7d", dailyPromptEnabled: "any", noVoiceForDays: 14 };
+  await s.dispatcher.deliver(claim({ filters }), s.sender, NOW);
+  assert.ok(s.finds[0].where.lastUserMessageAt.gte instanceof Date);
+  assert.equal(s.finds[0].where.OR[0].lastVoiceMessageAt, null);
+  assert.equal(s.sends.length, 1);
+});

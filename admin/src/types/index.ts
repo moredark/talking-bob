@@ -515,6 +515,11 @@ export interface AnalyticsTokenUsage {
   usageCoveragePct: number | null;
 }
 
+export interface ReplyUsageMetrics {
+  users: { total: number; text: number; voice: number; mixed: number; textSharePct: number | null };
+  replies: { total: number; text: number; voice: number };
+}
+
 export interface AdminAnalytics {
   version: 1;
   generatedAt: string;
@@ -529,6 +534,10 @@ export interface AdminAnalytics {
     status: "complete" | "partial" | "unavailable";
     completeFrom: string;
     incompleteBefore: string | null;
+  };
+  replyUsage: ReplyUsageMetrics & {
+    coverage: { status: "complete" | "partial" | "unavailable"; completeFrom: string; incompleteBefore: string | null };
+    daily: Array<ReplyUsageMetrics & { localDate: string }>;
   };
   daily: AnalyticsDailyBucket[];
   funnel: {

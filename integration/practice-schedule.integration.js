@@ -86,3 +86,27 @@ test("rollback gates include each independent option and sparse disabled users",
   assert.ok(sparse.some(row => row.id === on.id));
 });
 test.after(async () => prisma.$disconnect());
+
+test("text activity and voice absence compose identically in preview and persisted snapshot", async () => {
+  const { broadcastAudienceWhere } = require("../dist/modules/broadcast/broadcast-audience");
+  const { broadcastSnapshotInsert } = require("../dist/modules/broadcast/broadcast-snapshot");
+  const now = new Date("2026-11-16T12:00:00Z"), cutoff = new Date("2026-11-02T12:00:00Z");
+  const filters = { languageLevels: ["C2"], activity: "7d", dailyPromptEnabled: "any", noVoiceForDays: 14 };
+  const recent = new Date("2026-11-15T12:00:00Z");
+  const textOnly = await user({ languageLevel: "C2", lastUserMessageAt: recent });
+  const olderVoice = await user({ languageLevel: "C2", lastUserMessageAt: recent, lastVoiceMessageAt: new Date(cutoff.getTime() - 1) });
+  await user({ languageLevel: "C2", lastUserMessageAt: recent, lastVoiceMessageAt: cutoff });
+  await user({ languageLevel: "C2", lastUserMessageAt: recent, lastVoiceMessageAt: recent });
+  const expected = [textOnly.id, olderVoice.id].sort();
+  const preview = await prisma.user.findMany({ where: broadcastAudienceWhere(filters, now) });
+  assert.deepEqual(preview.map(u => u.id).sort(), expected);
+  const broadcast = await prisma.broadcast.create({ data: { ...broadcastData, filters } });
+  await prisma.$executeRaw(broadcastSnapshotInsert(broadcast.id, filters, now));
+  const recipients = await prisma.broadcastRecipient.findMany({ where: { broadcastId: broadcast.id } });
+  assert.deepEqual(recipients.map(r => r.userId).sort(), expected);
+  await prisma.user.update({ where: { id: textOnly.id }, data: { lastUserMessageAt: now } });
+  assert.ok(await prisma.user.findFirst({ where: { ...broadcastAudienceWhere(filters, new Date(now.getTime() + 1)), id: textOnly.id } }));
+  await prisma.user.update({ where: { id: textOnly.id }, data: { lastVoiceMessageAt: now } });
+  assert.equal(await prisma.user.findFirst({ where: { ...broadcastAudienceWhere(filters, new Date(now.getTime() + 1)), id: textOnly.id } }), null);
+  assert.equal(await prisma.broadcastRecipient.count({ where: { broadcastId: broadcast.id } }), 2);
+});

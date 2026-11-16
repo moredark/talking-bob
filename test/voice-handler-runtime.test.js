@@ -1,3 +1,4 @@
+const { createVoiceHandler } = require("./support/practice-reply-test-harness");
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
@@ -50,7 +51,7 @@ function createSubject({
     report: 0,
     replies: [],
   };
-  const handler = new VoiceHandler(
+  const handler = createVoiceHandler(
     {
       findByTelegramId: async () => {
         calls.findUser += 1;
@@ -65,11 +66,11 @@ function createSubject({
       getPromptById: async () => ({ id: "prompt-1", topic: "Travel" }),
     },
     {
-      precheckVoiceAcceptance: async () => {
+      precheckReplyAcceptance: async () => {
         calls.precheck += 1;
         return precheckResult;
       },
-      acceptVoiceAndMaybeClaimGeneration: async (data) => {
+      acceptReplyAndMaybeClaimGeneration: async (data) => {
         calls.acceptData = data;
         calls.accept += 1;
         return acceptanceResult ?? {
@@ -364,8 +365,8 @@ test("VoiceHandler suppresses a generated follow-up when the guarded assistant i
 test("VoiceHandler sends spoken reply only after assistant persistence", async () => {
   const events = []; const spokenReply = { send: async () => events.push("send") };
   const subject = createSubject({ spokenReply });
-  const original = subject.handler.conversationService.addAssistantMessageIfOpen;
-  subject.handler.conversationService.addAssistantMessageIfOpen = async (...args) => { events.push("persist"); return original(...args); };
+  const original = subject.handler.workflow.conversationService.addAssistantMessageIfOpen;
+  subject.handler.workflow.conversationService.addAssistantMessageIfOpen = async (...args) => { events.push("persist"); return original(...args); };
   const oldFetch = global.fetch; global.fetch = async () => new Response("audio");
   try { await subject.handler.handle(subject.context); } finally { global.fetch = oldFetch; }
   assert.deepEqual(events, ["persist", "send"]);

@@ -70,12 +70,14 @@ test("PostgreSQL integration runners keep the legacy and split migrations ordere
     "20260910120000_add_readiness_prompt",
     "20260910130000_refine_readiness_prompt",
     "20260913120000_practice_schedule_and_broadcast_options",
+    "20261116120000_text_practice_replies",
+    "20261116130000_reply_usage_metrics",
   ];
 
-  assert.deepEqual(migrationList(adminIntegration, "EXPECTED_MIGRATIONS").slice(-5), expectedTail);
-  assert.deepEqual(migrationList(postgresRunner, "ALL_MIGRATIONS").slice(-5), expectedTail);
+  assert.deepEqual(migrationList(adminIntegration, "EXPECTED_MIGRATIONS").slice(-expectedTail.length), expectedTail);
+  assert.deepEqual(migrationList(postgresRunner, "ALL_MIGRATIONS").slice(-expectedTail.length), expectedTail);
   assert.match(
     postgresRunner,
-    /const LATEST_MIGRATION = "20260913120000_practice_schedule_and_broadcast_options";/,
+    /const LATEST_MIGRATION = "20261116130000_reply_usage_metrics";/,
   );
 });

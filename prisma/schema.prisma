@@ -84,6 +84,7 @@ model User {
   promptWeekdaysMask    Int       @default(127)
   announcementEnabled   Boolean   @default(true)
   lastUserMessageAt     DateTime? @db.Timestamptz(3)
+  lastVoiceMessageAt    DateTime? @db.Timestamptz(3)
   dailyPromptHour       Int       @default(13)
   dailyPromptMinute     Int       @default(0)
   timezone              String    @default("Europe/Moscow")
@@ -216,6 +217,8 @@ model UserActivityDay {
   firstActivityAt DateTime @db.Timestamptz(3)
   lastActivityAt  DateTime @db.Timestamptz(3)
   messageCount    Int      @default(1)
+  textMessageCount Int     @default(0)
+  voiceMessageCount Int    @default(0)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -383,6 +386,7 @@ model QuotaWindow {
 }
 
 model AdminAnalyticsCoverage {
+  replyUsageCompleteFrom DateTime @default(now()) @db.Timestamptz(3)
   id           String   @id
   completeFrom DateTime @db.Timestamptz(3)
   createdAt    DateTime @default(now()) @db.Timestamptz(3)

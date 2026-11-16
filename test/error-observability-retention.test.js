@@ -1,3 +1,4 @@
+const { createVoiceHandler } = require("./support/practice-reply-test-harness");
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
@@ -302,7 +303,7 @@ test("full voice flow preserves update correlation without logging token, transc
   const { creates, observability, service: errorLog } = createErrorLogSubject();
   const replies = [];
   let followUpTrace;
-  const handler = new VoiceHandler(
+  const handler = createVoiceHandler(
     {
       findByTelegramId: async () => ({
         id: "user-private-flow",
@@ -320,8 +321,8 @@ test("full voice flow preserves update correlation without logging token, transc
       }),
     },
     {
-      precheckVoiceAcceptance: async () => ({ outcome: "accepted" }),
-      acceptVoiceAndMaybeClaimGeneration: async ({ content }) => {
+      precheckReplyAcceptance: async () => ({ outcome: "accepted" }),
+      acceptReplyAndMaybeClaimGeneration: async ({ content }) => {
         assert.equal(content, transcript);
         return {
           outcome: "accepted",
@@ -697,4 +698,14 @@ test("TTS error dimensions remain classified without exposing request or deliver
     assert.equal(data.stack, null);
     assert.equal(JSON.stringify(data).includes("private"), false);
   }
+});
+
+test("text processing errors retain only sanitized operation and correlation", async () => {
+  const { createTextPractice } = require("./support/text-practice-test-harness");
+  const { creates, service: errorLog } = createErrorLogSubject();
+  const privateText = "I privately visited my family in Reykjavík";
+  const s = createTextPractice({ followUpError: new Error(privateText), errorLog });
+  await s.text.handle(s.context(1, privateText));
+  assert.equal(creates.length, 1); assert.equal(creates[0].data.operation, "text.process");
+  assert.doesNotMatch(JSON.stringify(creates), /Reykjavík|privately|visited/);
 });

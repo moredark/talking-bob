@@ -100,6 +100,57 @@ Record the release commit, image digests, latest migration, UTC timestamp, and
 checksum alongside the archive. Copy archive and checksum off-host and monitor
 their freshness; a dump left only on the DB host is not a recovery plan.
 
+## Text reply rollout and rollback
+
+For migration `20261116120000_text_practice_replies`, stop the old app and all
+other update/broadcast writers, let accepted work drain, and take the backup
+above before running the new init image. The migration adds nullable
+`users.lastVoiceMessageAt` and copies the existing `lastUserMessageAt` into it.
+This is valid only before typed replies are admitted: every previous accepted
+reply was voice. Retained activity facts also cover conversations whose
+sensitive content was already purged.
+
+Before starting the new app, verify that the following returns zero:
+
+```sql
+SELECT COUNT(*) FROM "users"
+WHERE "lastVoiceMessageAt" IS DISTINCT FROM "lastUserMessageAt";
+```
+
+If the migration ran while an old writer was still active, stop/drain that
+writer and reconcile the timestamps before enabling text:
+
+```sql
+UPDATE "users" SET "lastVoiceMessageAt" = "lastUserMessageAt"
+WHERE "lastVoiceMessageAt" IS DISTINCT FROM "lastUserMessageAt";
+```
+
+Do not perform that reconciliation after text admission has started: the two
+timestamps then intentionally differ. Start one new poller with voice-specific
+broadcast predicates and shared voice/text admission together. No overlapping
+old writer or rolling deployment is supported by this one-step backfill.
+
+Migration `20261116130000_reply_usage_metrics` additionally creates per-format
+activity counters and `replyUsageCompleteFrom`. Run it after draining old writers
+and start the new version together: an old writer after the marker would record
+unclassified activity. The dashboard reports partial history for periods beginning
+before this marker; do not present unknown history as measured zero usage. A rollback
+build must continue updating both format counters as well as voice activity.
+
+The deterministic smoke covers text-only and mixed replies, manual reports,
+repeat delivery and next-question selection. PostgreSQL tests cover migration,
+voice activity after retention, reset, duplicate/rollback, report races and
+broadcast snapshot parity. Staging should additionally exercise one typed
+answer and a mixed conversation with the dedicated test bot.
+
+After any typed replies have been accepted, keep the additive column and the
+stored text if disabling the feature. Use a rollback build with the text route
+disabled while retaining `lastVoiceMessageAt` writes and voice-specific
+`noVoiceForDays` predicates. An unmodified older binary reads general activity
+as voice activity and cannot preserve this contract. Do not rewrite general
+activity, delete typed replies or drop the column to make that binary fit.
+The backup/restore procedure remains a separate deliberate recovery action.
+
 ## Recreate rollout
 
 For an existing database reporting `has no actual collation version, but a

@@ -26,7 +26,16 @@ export class ResponseGenerationOperations {
       const userMessageCount = await tx.conversationMessage.count({
         where: { userPromptId: data.userPromptId, role: "user" },
       });
-      if (userMessageCount === 0) return { outcome: "no_messages" };
+      if (userMessageCount === 0) {
+        // Retention removes messages but keeps the generated report's lifecycle.
+        await this.lockResponseByPrompt(tx, data.userPromptId);
+        const saved = await tx.userResponse.findUnique({
+          where: { userPromptId: data.userPromptId },
+        });
+        return saved?.generationStatus === "generated"
+          ? { outcome: "generated", response: saved }
+          : { outcome: "no_messages" };
+      }
       if (prompt.conversationStatus === "open" && data.expectedLastMessageId !== undefined) {
         const latest = await tx.conversationMessage.findFirst({
           where: { userPromptId: data.userPromptId },

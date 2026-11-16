@@ -1,7 +1,7 @@
 # Talking Bob: application contract
 
-> Verified against the backend on 2026-08-11, through migration
-> `20260811120000_add_streaks`.
+> Text-input and usage changes verified on 2026-11-16, through migration
+> `20261116130000_reply_usage_metrics`; earlier contracts retain their baseline.
 
 Talking Bob is a Telegram bot for practising spoken English. User-facing
 commands, status messages, and report feedback are in Russian. Questions and
@@ -27,8 +27,8 @@ See [SpeechKit setup](speechkit.md).
   prompt reservation, not only when the user is first registered.
 - The **New question** callback (`new_question`) follows the same admission,
   reservation, and delivery flow without the welcome message.
-- `/report` generates or resends the report for the latest question. At least
-  one accepted voice reply is required.
+- `/report` generates or resends the report for the latest question;
+  admission follows [text-practice-replies](../openspec/specs/text-practice-replies/spec.md).
 - `/settings` provides access to the practice schedule, announcement consent,
   streak reminders, and agent personality. There is no Telegram timezone picker.
 - Practice commands, weekday selection, time changes, and manual mode follow
@@ -62,26 +62,15 @@ reservation is persisted, a later Telegram delivery failure does not restore
 the manual-dialog allowance. Scheduled deliveries do not consume that
 allowance.
 
-## Voice conversation and reports
+## Conversation input and reports
 
-Only the latest successfully sent (`deliveryStatus = sent`) `UserPrompt` can
-accept voice messages. A voice message is limited to 300 seconds and 20 MiB by
-default and cannot be configured above those limits. The bot downloads the
-Telegram file with bounded time/size, transcribes it as English, then persists
-the user message. `telegramUpdateId` is unique, so a duplicate Telegram update
-is ignored rather than processed twice.
+Text and mixed reply acceptance, routing priority, input bounds, shared quotas,
+readiness, report admission and format-independent streak qualification follow
+[text-practice-replies](../openspec/specs/text-practice-replies/spec.md).
 
-For accepted user turns one and two, the LLM receives the persisted history
-and generates an English follow-up. The assistant message is inserted only if
-the conversation is still open and the corresponding user message is still
-the latest conversation message. Before the third and every later user turn can
-close the conversation, the LLM checks whether the speech contains enough
-meaningful English for specific feedback. Insufficient speech keeps the dialog
-open and receives one additional question; if the latest question was unanswered,
-its exact text is repeated (or the original prompt when no follow-up exists).
-Readiness is checked against the conversation snapshot under the prompt lock,
-so a stale decision cannot accept a new turn or close the conversation.
-A sufficient third or later turn atomically closes and claims generation.
+Voice-specific bounds remain 300 seconds and 20 MiB by default, with no higher
+configuration allowed. Audio is downloaded with bounded time/size and
+transcribed as English through Whisper before the common reply workflow.
 
 When `TTS_ENABLED=true`, an inserted assistant follow-up is synthesized and
 sent as a voice message with the existing **Get report** keyboard and a spoiler
@@ -92,14 +81,10 @@ A definite voice rejection may fall back to text; an ambiguous Telegram outcome
 does not trigger another content or generic-error send. Follow-up delivery does
 not have a durable retry claim; this change does not introduce automatic retries.
 
-`/report` may close and report a conversation after its first accepted voice
-message if the same readiness check passes; otherwise it asks for more detail
-or repeats the unanswered question without closing the conversation. With no
-accepted user messages it is rejected. Report generation is
-claimed in the database. Delivery of an already generated report follows the
-[report-delivery contract](../openspec/specs/report-delivery/spec.md). A failed generation can be reclaimed only
-by a new request key. Expired leases are reclaimable, while concurrent active
-work returns a busy response.
+Report generation is claimed in the database. A failed generation can be
+reclaimed only by a new request key. Expired leases are reclaimable, while
+concurrent active work returns a busy response. Delivery of a generated report
+follows [report-delivery](../openspec/specs/report-delivery/spec.md).
 
 AI analysis and readiness requests retry transient timeouts, network failures,
 HTTP 429 and 5xx, and unusable model output within a maximum of three provider
@@ -115,7 +100,8 @@ failure with `/report` retry guidance; it never saves a fallback as a completed 
 
 The readiness system prompt is stored as `agent_prompt_rules.readinessPrompt` beside the shared follow-up and analysis prompts. It is loaded in the same personality snapshot and can be edited under **Common rules** in the admin UI; the application code only builds the conversation evidence payload and validates the configured JSON response.
 
-The default analysis rules treat learner text as an automatic speech transcript:
+The default analysis rules use the same conversational-English rubric for
+automatic speech transcripts and typed practice replies:
 feedback and scores concern spoken grammar, vocabulary, naturalness, and clarity,
 excluding capitalization, punctuation, spelling, apostrophes, and sentence
 boundaries. Suspected transcription artifacts are not treated as learner errors;
@@ -128,12 +114,9 @@ are specified in the [report-delivery contract](../openspec/specs/report-deliver
 
 ## Streak and reminders (implemented)
 
-A local calendar day qualifies when a conversation is successfully closed,
-not when report generation or report delivery later succeeds. Both closing
-paths use the same readiness rule: a sufficient third or later voice turn and a valid manual
-`/report` after at least one accepted voice turn. Qualification belongs to the
-same database transaction that closes the `UserPrompt` and creates or claims
-its `UserResponse` generation owner.
+The closing paths and format-independent qualification transaction follow
+[text-practice-replies](../openspec/specs/text-practice-replies/spec.md).
+The calendar, expiry and reminder algorithm remains defined below.
 
 The first qualified day starts a streak of one. A qualification on the next
 local calendar day increments it; another closed conversation on an already
@@ -194,7 +177,7 @@ Quotas are persisted in PostgreSQL and serialized per user/action window:
 
 | Action | Limit | Window | Used by |
 | --- | ---: | --- | --- |
-| `voice_response` | 10 | rolling 60 minutes | Voice processing admission |
+| `voice_response` | 10 | rolling 60 minutes | Shared voice/text reply admission; see [text-practice-replies](../openspec/specs/text-practice-replies/spec.md) |
 | `command` | 30 | rolling 60 minutes | `/report` |
 | `dialog_start` | 20 | effective local calendar day | `/start` and **New question** after a prompt catalogue preflight |
 
@@ -254,7 +237,7 @@ chunks and deletes conversation messages, nulls voice-file identifiers,
 transcripts, and analysis, and sets
 `sensitiveDataPurgedAt` while preserving conversation lifecycle and
 prompt-delivery provenance. Retention-safe admin analytics preserves only
-non-sensitive activity-day, first-message, score, and report-delivery
+non-sensitive activity-day and reply-format counts, first-message, score, and report-delivery
 timestamps; these facts contain no transcript, message, provider response, or
 recipient identity.
 The [report-delivery contract](../openspec/specs/report-delivery/spec.md)
@@ -333,7 +316,7 @@ changes affect the next rate/start/LLM/voice/cleanup admission; infrastructure
 changes remain pending until restart. AI provider-call retention remains fixed
 at 30 days.
 
-Rolling rate defaults remain voice `10/60`, command `30/60`, and dialogs/day
+Rolling rate defaults remain shared voice/text replies `10/60`, command `30/60`, and dialogs/day
 `20`. Registry hard caps of 1000 requests/dialogs and 10080 minutes are
 deliberate operational guardrails, not new defaults.
 ## Related documentation
@@ -343,3 +326,11 @@ deliberate operational guardrails, not new defaults.
 - [Backend operations and recovery](operations.md)
 - [Deployment plan](DEPLOYMENT_PLAN.md) — a forward-looking checklist, not a
   statement of current runtime behavior
+
+## Reply format usage in admin
+
+The existing dashboard and `GET /admin/analytics` expose reply-format usage
+under the additive `replyUsage` field for the selected 7/30/90 Moscow days.
+Definitions, partial coverage and retention behavior are maintained in
+[text-practice-replies](../openspec/specs/text-practice-replies/spec.md).
+The existing dashboard KPIs and analytics sections remain available.

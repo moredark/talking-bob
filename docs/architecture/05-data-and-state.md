@@ -58,7 +58,7 @@ stateDiagram-v2
     }
 ```
 
-Только последний `sent` `UserPrompt` принимает voice messages. `pending` не
+Только последний `sent` `UserPrompt` принимает голосовые и текстовые сообщения. `pending` не
 означает «можно безопасно повторить»: наличие `deliveryAttemptedAt` отделяет
 неизвестный внешний outcome от ещё не начатой попытки.
 
@@ -125,7 +125,7 @@ deadlock в гонке закрытия диалога с отправкой.
 Сервисы берут `FOR UPDATE` на корневую запись агрегата до решения о переходе:
 
 - `User` — schedule selection и quota window;
-- `UserPrompt` — voice acceptance, conversation close и generation ownership;
+- `UserPrompt` — reply acceptance, conversation close и generation ownership;
 - `User` → `StreakReminder` — qualification/settings и reminder attempt;
 - `UserResponse` — generation completion/reclaim;
 - `ReportDeliveryRequest` — cursor и delivery outcome.
@@ -157,6 +157,17 @@ Completion принимает не только ID:
 3. неизвестный результат — нельзя автоматически повторять side effect.
 
 Эта модель используется и для prompt, и для report delivery.
+
+## Общая и голосовая активность
+
+Принятие user-реплики обновляет общую активность в транзакции conversation;
+голос дополнительно обновляет отдельный retention-safe `lastVoiceMessageAt`.
+Дневные `textMessageCount`/`voiceMessageCount` растут в том же atomic upsert,
+что и общий `messageCount`. Admin analytics агрегирует их без чтения сообщений;
+историческое распределение неизвестно до отдельного coverage marker.
+Рассылки используют общий факт для activity-фильтров и голосовой для
+`noVoiceForDays`. Структура и backfill — в [database contract](../database.md),
+поведение — в [text-practice-replies](../../openspec/specs/text-practice-replies/spec.md).
 
 ## Retention и историчность
 

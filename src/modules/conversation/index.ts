@@ -1,9 +1,9 @@
 export { ConversationModule } from "./conversation.module";
 export {
   ConversationService,
-  AcceptVoiceData,
-  VoicePrecheckResult,
+  AcceptReplyData,
+  ReplyPrecheckResult,
   ConversationGenerationClaim,
-  AcceptVoiceResult,
+  AcceptReplyResult,
   GuardedAssistantResult,
 } from "./conversation.service";

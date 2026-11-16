@@ -74,6 +74,7 @@ const SAFE_OPERATIONS = new Set([
   "start.release_quota",
   "start.send_welcome",
   "voice.process",
+  "text.process",
   "report.generate",
   "report.prepare_delivery",
   "report.persist_attempt",

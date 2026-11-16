@@ -30,9 +30,10 @@ flowchart TD
 ## Владение зависимостями
 
 - `DatabaseModule` глобально предоставляет `PrismaService`; доменные модули работают с БД через этот provider.
-- `TelegramModule` владеет `TelegramService`, обработчиками `/start`, voice,
-  report и settings, а также общим `ReportWorkflowService`. Handlers принимают
-  transport-событие и выполняют admission; общий auto/manual report workflow
+- `TelegramModule` владеет `TelegramService`, обработчиками `/start`, voice/text,
+  report и settings, а также общими `PracticeReplyWorkflowService` и `ReportWorkflowService`.
+  Handlers принимают transport-событие; общий reply workflow выполняет admission
+  ответов и продолжение диалога, а auto/manual report workflow
   не дублируется между ними. Атомарные state transitions остаются в профильных
   сервисах.
 - `ScheduleModule` входит в Telegram-контур: dispatcher получает активный экземпляр grammY-бота от `TelegramService`.

@@ -11,6 +11,8 @@ const prisma = new PrismaClient();
 test("analytics facts survive sensitive retention purge and use indexed durable sources", async () => {
   await prisma.$connect();
   const ids = {};
+  const originalCoverage = await prisma.adminAnalyticsCoverage.findUniqueOrThrow({ where: { id: "durable_facts" } });
+  await prisma.adminAnalyticsCoverage.update({ where: { id: "durable_facts" }, data: { completeFrom: new Date("2026-08-10T12:00:00Z") } });
   try {
     await prisma.$transaction(async (tx) => {
       const telegramBase = BigInt(Date.now()) * 1000n;
@@ -77,7 +79,7 @@ test("analytics facts survive sensitive retention purge and use indexed durable 
           return callback(tx);
         }),
       };
-      const accepted = await new ConversationService(timezonePrisma).acceptVoiceAndMaybeClaimGeneration({
+      const accepted = await new ConversationService(timezonePrisma).acceptReplyAndMaybeClaimGeneration({
         userId: ids.userId,
         userPromptId: runtimePrompt.id,
         content: "timezone-safe",
@@ -115,6 +117,7 @@ test("analytics facts survive sensitive retention purge and use indexed durable 
     }
     if (ids.userId || ids.recipientUserId) await prisma.user.deleteMany({ where: { id: { in: [ids.userId, ids.recipientUserId].filter(Boolean) } } });
     if (ids.promptId) await prisma.prompt.deleteMany({ where: { id: ids.promptId } });
+    await prisma.adminAnalyticsCoverage.update({ where: { id: "durable_facts" }, data: { completeFrom: originalCoverage.completeFrom } });
     await prisma.$disconnect();
   }
 });

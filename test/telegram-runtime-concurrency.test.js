@@ -156,6 +156,7 @@ function createBareService({
   startHandle,
   startNewQuestionHandle,
   voiceHandle,
+  textHandle,
   reportHandle,
   settingsHandle,
   drainTimeoutMs = 1_000,
@@ -194,6 +195,7 @@ function createBareService({
     undefined,
     broadcastDispatcher,
     scheduleHandler,
+    { handle: textHandle || (async () => undefined) },
   );
 }
 
@@ -670,4 +672,44 @@ test("Telegram broadcast adapter preserves schedule action as an inline button",
   assert.equal(sent[0][0], "42");
   assert.equal(sent[0][1], "Проверьте время");
   assert.equal(sent[0][2].reply_markup.inline_keyboard[0][0].callback_data, "schedule_open");
+});
+
+test("text handler promises preserve same-chat FIFO, cross-chat concurrency and shutdown drain", async () => {
+  const gate = deferred(); const events = [];
+  const { service, fakeBot } = createService({ textHandle: async ctx => {
+    events.push(`start:${ctx.update.update_id}`);
+    if (ctx.update.update_id === 1) await gate.promise;
+    events.push(`end:${ctx.update.update_id}`);
+  } });
+  const ctx = (chat, id) => ({ from: { id: chat }, chat: { id: chat }, message: { text: "I walk daily" }, update: { update_id: id } });
+  const first = fakeBot.dispatch(ctx(1, 1)); await waitFor(() => events.length > 0, "first text");
+  const second = fakeBot.dispatch(ctx(1, 2)); const parallel = fakeBot.dispatch(ctx(2, 3));
+  await parallel; assert.deepEqual(events, ["start:1", "start:3", "end:3"]);
+  const closing = service.onModuleDestroy(); let drained = false; closing.then(() => { drained = true; });
+  await tick(); assert.equal(drained, false); gate.resolve(); await Promise.all([first, second, closing]);
+  assert.deepEqual(events, ["start:1", "start:3", "end:3", "end:1", "start:2", "end:2"]);
+});
+
+test("real schedule handler gets text before practice, including invalid time, expiry and cancellation", async (t) => {
+  const { ScheduleHandler } = require("../dist/modules/telegram/handlers/schedule.handler");
+  const { TextHandler } = require("../dist/modules/telegram/handlers/text.handler");
+  t.mock.timers.enable({ apis: ["Date"], now: 1000000 });
+  const practice = [], saved = [], voices = [], commands = [];
+  const user = { id: "u", dailyPromptHour: 13, dailyPromptMinute: 0, timezone: "UTC", dailyPromptEnabled: false };
+  const schedule = new ScheduleHandler({ findByTelegramId: async () => user }, { updateScheduleSettings: async (_id, patch) => { saved.push([patch.dailyPromptHour, patch.dailyPromptMinute]); return { ...user, ...patch }; } }, {});
+  const { service, fakeBot } = createService({ scheduleHandler: schedule, startHandle: async () => commands.push("start"), textHandle: ctx => new TextHandler({ handle: async (_ctx, _kind, prepare) => practice.push(await prepare()) }).handle(ctx), voiceHandle: async () => voices.push("voice") });
+  let sequence = 500;
+  const ctx = text => ({ from: { id: 1 }, chat: { id: 1, type: "private" }, message: { text }, update: { update_id: ++sequence }, reply: async () => {}, editMessageText: async () => {} });
+  await schedule.openTimePicker(ctx());
+  await fakeBot.dispatch(ctx("I walk daily")); assert.equal(practice.length, 0); assert.equal(saved.length, 0);
+  const voice = ctx(); delete voice.message; voice.update.message = { voice: {} }; await fakeBot.dispatch(voice); assert.equal(voices.length, 1);
+  await fakeBot.dispatch(ctx("08:45")); assert.deepEqual(saved, [[8, 45]]);
+  await fakeBot.dispatch(ctx("I like Rome")); assert.deepEqual(practice, ["I like Rome"]);
+  await schedule.openTimePicker(ctx()); t.mock.timers.tick(600001); await fakeBot.dispatch(ctx("I enjoy walking")); assert.equal(practice.length, 2);
+  await schedule.openTimePicker(ctx()); const command = ctx("/start"); command.command = "start"; await fakeBot.dispatch(command);
+  await fakeBot.dispatch(ctx("I like food")); assert.equal(practice.length, 3); assert.deepEqual(commands, ["start"]);
+  await fakeBot.dispatch(ctx("/unknown")); assert.equal(practice.length, 3);
+  await schedule.openTimePicker(ctx()); const callback = callbackContext(1, ++sequence, "report"); callback.chat.type = "private"; await fakeBot.dispatch(callback);
+  await fakeBot.dispatch(ctx("I like tea")); assert.equal(practice.length, 4);
+  await service.onModuleDestroy();
 });

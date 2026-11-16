@@ -27,7 +27,7 @@ export function broadcastSnapshotInsert(
   }
   if (filters.noVoiceForDays !== undefined) {
     const cutoff = new Date(now.getTime() - filters.noVoiceForDays * 24 * 60 * 60 * 1000);
-    conditions.push(Prisma.sql`(app_user."lastUserMessageAt" IS NULL OR app_user."lastUserMessageAt" < ${cutoff})`);
+    conditions.push(Prisma.sql`(app_user."lastVoiceMessageAt" IS NULL OR app_user."lastVoiceMessageAt" < ${cutoff})`);
   }
   if (filters.scheduledDeliveryWithinDays !== undefined) {
     const cutoff = new Date(now.getTime() - filters.scheduledDeliveryWithinDays * 24 * 60 * 60 * 1000);

@@ -165,8 +165,8 @@ test("period predicates preserve exact boundaries and require scheduled sent del
   const filters = { ...FILTERS, noVoiceForDays: 14, scheduledDeliveryWithinDays: 14 };
   const where = broadcastAudienceWhere(filters, NOW);
   assert.deepEqual(where.OR, [
-    { lastUserMessageAt: null },
-    { lastUserMessageAt: { lt: new Date("2026-07-27T10:00:00.000Z") } },
+    { lastVoiceMessageAt: null },
+    { lastVoiceMessageAt: { lt: new Date("2026-07-27T10:00:00.000Z") } },
   ]);
   assert.deepEqual(where.userPrompts, {
     some: {
@@ -179,7 +179,7 @@ test("period predicates preserve exact boundaries and require scheduled sent del
     },
   });
   const sql = broadcastSnapshotInsert(IDS.broadcast, filters, NOW).strings.join("?").replace(/\s+/g, " ");
-  assert.match(sql, /lastUserMessageAt.*IS NULL OR.*lastUserMessageAt.*</);
+  assert.match(sql, /lastVoiceMessageAt.*IS NULL OR.*lastVoiceMessageAt.*</);
   assert.match(sql, /EXISTS \( SELECT 1 FROM "user_prompts"/);
   assert.match(sql, /"source" = 'scheduled'/);
   assert.match(sql, /"deliveryStatus" = 'sent'/);

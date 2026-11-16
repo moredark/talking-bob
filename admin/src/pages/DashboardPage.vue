@@ -14,6 +14,7 @@ import type {
 import StatsCard from "../components/StatsCard.vue";
 import StatePanel from "../components/StatePanel.vue";
 import AccessibleDataTable from "../components/analytics/AccessibleDataTable.vue";
+import ReplyUsageSection from "../components/analytics/ReplyUsageSection.vue";
 import AnalyticsSection from "../components/analytics/AnalyticsSection.vue";
 import MetricBarChart from "../components/analytics/MetricBarChart.vue";
 import { Badge } from "@/components/ui/badge";
@@ -533,6 +534,7 @@ onMounted(() => {
         @retry="loadAnalytics"
       />
       <div v-else-if="analytics" class="grid gap-5 xl:grid-cols-2">
+        <ReplyUsageSection v-if="analytics.replyUsage" :usage="analytics.replyUsage" class="xl:col-span-2" />
         <AnalyticsSection
           title="Динамика продукта"
           description="Новые и активные пользователи, учебные промпты и ответы по московским дням."

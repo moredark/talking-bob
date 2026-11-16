@@ -2,6 +2,7 @@
 
 Актуально на **2026-08-11**. Документ сверён с `prisma/schema.prisma` и
 миграциями по `20260811120000_add_streaks` включительно.
+Дополнения текстового ввода сверены с `20261116120000_text_practice_replies` 2026-11-16.
 
 Здесь описана база bot/backend. `AdminUser` намеренно не включён: это отдельный
 контур аутентификации. Append-only `AdminAuditLog` включён, поскольку его
@@ -51,6 +52,7 @@
 | `promptWeekdaysMask` | `INTEGER` | нет | `127`; биты Пн–Вс, CHECK 1..127 |
 | `announcementEnabled` | `BOOLEAN` | нет | `true`; отдельное согласие на анонсы |
 | `lastUserMessageAt` | `TIMESTAMPTZ(3)` | да | Последняя принятая user-реплика; несекретный activity fact |
+| `lastVoiceMessageAt` | `TIMESTAMPTZ(3)` | да | Последний принятый голосовой ответ; несекретный факт, сохраняемый после retention |
 | `dailyPromptHour` | `INTEGER` | нет | `13` |
 | `dailyPromptMinute` | `INTEGER` | нет | `0` |
 | `timezone` | `TEXT` | нет | `Europe/Moscow` |
@@ -140,7 +142,10 @@ occurrence идемпотентен, а ручные prompt instances не ог�
 ### `user_activity_days` (`UserActivityDay`)
 
 Несекретный Moscow-calendar activity fact: composite PK `userId, localDate`,
-`firstActivityAt`, `lastActivityAt` и положительный `messageCount`. CHECK
+`firstActivityAt`, `lastActivityAt` и положительный `messageCount`.
+С `20261116130000_reply_usage_metrics` поля `textMessageCount` и
+`voiceMessageCount` имеют default 0; CHECK требует неотрицательные значения
+и сумму не больше `messageCount`. Остаток — неизвестный исторический формат. CHECK
 гарантирует, что оба instant принадлежат `localDate` в `Europe/Moscow`. Index
 `localDate, userId` обслуживает bounded daily/retention analytics. Строка
 upsert-ится в той же транзакции, где принимается user message, не содержит
@@ -169,8 +174,8 @@ upsert-ится в той же транзакции, где принимаетс
 | `id` | `TEXT` | нет | Prisma `uuid()`; PK |
 | `userId` | `TEXT` | нет | FK → `users.id` |
 | `userPromptId` | `TEXT` | нет | FK → `user_prompts.id`; unique |
-| `voiceFileId` | `TEXT` | да | Voice id первого принятого user turn; очищается retention |
-| `transcript` | `TEXT` | да | Транскрипт; очищается retention |
+| `voiceFileId` | `TEXT` | да | Первый ненулевой voice id принятых user turns; null для текстового диалога; очищается retention |
+| `transcript` | `TEXT` | да | Объединённые user-реплики (текст и распознанный голос); очищается retention |
 | `analysis` | `TEXT` | да | Persisted report payload; очищается retention |
 | `generationStatus` | `ReportGenerationStatus` | нет | `generating` |
 | `generationRequestKey` | `VARCHAR(160)` | нет | Идемпотентный ключ запроса генерации |
@@ -507,7 +512,8 @@ validated as 1..365; disabled fields are omitted. No campaign kind or template
 is stored. `createdAt` records the same evaluation instant used by the
 transactional audience snapshot; API exposes it as `evaluatedAt`.
 
-Eligibility uses retained `User.lastUserMessageAt` and an EXISTS over
+General activity uses retained `User.lastUserMessageAt`; `noVoiceForDays` uses
+`User.lastVoiceMessageAt`. The delivery filter uses an EXISTS over
 `UserPrompt(source=scheduled, deliveryStatus=sent, sentAt in [T-M days,T])`.
 The existing user/delivery-status/sent-at index supports the delivery lookup.
 The full behavior is maintained in
@@ -573,3 +579,41 @@ Production deployment должен делать backup и выполнять
 - [Архитектурный индекс](architecture/README.md)
 - [Application contract](app.md)
 - [Operations runbook](operations.md)
+
+## Text practice reply activity
+
+Migration `20261116120000_text_practice_replies` adds nullable
+`users.lastVoiceMessageAt TIMESTAMPTZ(3)` and copies `lastUserMessageAt` into it
+before text admission is enabled. No text, audio or transcript is backfilled.
+A fresh user keeps both fields null. Apply with old writers drained; see
+[rollout procedure](operations.md#text-reply-rollout-and-rollback).
+
+Acceptance of every user reply atomically updates general activity,
+`firstUserMessageAt` and `UserActivityDay`; only a reply with a voice identifier
+updates `lastVoiceMessageAt`. Both last-message times advance monotonically;
+duplicates and rollback add no activity. Reset progress clears both times.
+Retention preserves these nonsensitive facts while deleting conversation
+messages and clearing the combined `UserResponse.transcript` and analysis.
+Text-only messages and report owners store null voice identifiers. Both report
+closing paths select the first non-null voice identifier in history, if any.
+
+## Reply format usage metrics
+
+Migration `20261116130000_reply_usage_metrics` adds both per-format counters
+and `AdminAnalyticsCoverage.replyUsageCompleteFrom TIMESTAMPTZ(3) NOT NULL`
+with a default collection-start instant. Historical counts remain unclassified;
+no transcript or retained message is used to guess its format.
+
+Every accepted reply increments exactly one format counter in the same SQL
+upsert and transaction as `messageCount`. Duplicate updates, failed acceptance
+and rollback produce no increment. Retention keeps these non-sensitive facts;
+reset progress removes the user's activity rows through the existing flow.
+
+`GET /admin/analytics` version 1 adds `replyUsage`: distinct period users for
+text, voice, both and any known format; reply counts; text-user share; Moscow
+daily values with zero-filled days; separate complete/partial/unavailable
+coverage. A user on several days is counted once for the period, and formats
+on different days still intersect. The rate denominator is distinct users
+with any known format; an empty denominator returns null. Queries use only
+activity aggregates and the coverage marker. The normative behavior lives in
+[text-practice-replies](../openspec/specs/text-practice-replies/spec.md).

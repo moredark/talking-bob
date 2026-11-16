@@ -107,6 +107,7 @@ export class AdminUsersService {
         where: { id },
         data: {
           lastUserMessageAt: null,
+          lastVoiceMessageAt: null,
           currentStreak: 0,
           longestStreak: 0,
           lastStreakLocalDate: null,

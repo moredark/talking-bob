@@ -505,9 +505,9 @@ test("critical PostgreSQL invariants", async (t) => {
       voiceFileId: `voice-${index}`, telegramUpdateId: nextTelegramId(),
       generationRequestKey: `readiness-${index}`, readiness,
     });
-    await service.acceptVoiceAndMaybeClaimGeneration(voice(1));
-    const second = await service.acceptVoiceAndMaybeClaimGeneration(voice(2));
-    const third = await service.acceptVoiceAndMaybeClaimGeneration(voice(3, {
+    await service.acceptReplyAndMaybeClaimGeneration(voice(1));
+    const second = await service.acceptReplyAndMaybeClaimGeneration(voice(2));
+    const third = await service.acceptReplyAndMaybeClaimGeneration(voice(3, {
       ready: false, expectedLastMessageId: second.message.id,
     }));
     assert.equal(third.generationClaim, null);
@@ -519,11 +519,11 @@ test("critical PostgreSQL invariants", async (t) => {
     ]);
     assert.deepEqual(questions.map(({ outcome }) => outcome).sort(), ["inserted", "stale"]);
     const question = questions.find(({ outcome }) => outcome === "inserted").message;
-    const stale = await service.acceptVoiceAndMaybeClaimGeneration(voice(4, {
+    const stale = await service.acceptReplyAndMaybeClaimGeneration(voice(4, {
       ready: true, expectedLastMessageId: third.message.id,
     }));
     assert.equal(stale.outcome, "stale");
-    const fourth = await service.acceptVoiceAndMaybeClaimGeneration(voice(4, {
+    const fourth = await service.acceptReplyAndMaybeClaimGeneration(voice(4, {
       ready: true, expectedLastMessageId: question.id,
     }));
     assert.ok(fourth.generationClaim);
@@ -620,6 +620,110 @@ test("critical PostgreSQL invariants", async (t) => {
     assert.equal(occurrences.length, 1);
     assert.equal(new Set(occurrences.map(({ scheduledOccurrenceKey }) => scheduledOccurrenceKey)).size, 1);
   });
+  await t.test("text migration preserves null and retained historical voice time", async () => {
+    const { readFileSync } = require("node:fs");
+    const migration = readFileSync("prisma/migrations/20261116120000_text_practice_replies/migration.sql", "utf8");
+    await prisma.$transaction(async tx => {
+      await tx.$executeRawUnsafe('CREATE TEMP TABLE "users" (id TEXT, "lastUserMessageAt" TIMESTAMPTZ(3)) ON COMMIT DROP');
+      await tx.$executeRawUnsafe(`INSERT INTO "users" VALUES ('never', NULL), ('retained-after-content-purge', '2026-07-01T09:12:34.567Z')`);
+      for (const statement of migration.split(";").map(s => s.trim()).filter(Boolean)) await tx.$executeRawUnsafe(statement);
+      const rows = await tx.$queryRawUnsafe('SELECT * FROM "users" ORDER BY id');
+      assert.equal(rows[0].lastVoiceMessageAt, null);
+      assert.equal(rows[1].lastVoiceMessageAt.toISOString(), "2026-07-01T09:12:34.567Z");
+      assert.deepEqual(rows[1].lastVoiceMessageAt, rows[1].lastUserMessageAt);
+    });
+  });
+
+  await t.test("mixed acceptance dedupes, fences, preserves monotonic activity and resets atomically", async () => {
+    const user = await createUser(), prompt = await createPrompt("mixed-acceptance");
+    const session = await createSentUserPrompt(user.id, prompt.id);
+    const conversation = new ConversationService(prisma, new StreakService(prisma));
+    const data = (content, extra = {}) => ({ userId: user.id, userPromptId: session.id, content, telegramUpdateId: nextTelegramId(), generationRequestKey: content, ...extra });
+    const firstData = data("I like Rome");
+    const repeated = await Promise.all([conversation.acceptReplyAndMaybeClaimGeneration(firstData), conversation.acceptReplyAndMaybeClaimGeneration(firstData)]);
+    assert.deepEqual(repeated.map(r => r.outcome).sort(), ["accepted", "duplicate"]);
+    let row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    assert.ok(row.lastUserMessageAt); assert.equal(row.lastVoiceMessageAt, null);
+    const future = new Date(Date.now() + 86400000);
+    await prisma.user.update({ where: { id: user.id }, data: { lastVoiceMessageAt: future, lastUserMessageAt: future } });
+    const second = await conversation.acceptReplyAndMaybeClaimGeneration(data("I spoke to locals", { voiceFileId: "first-voice" }));
+    row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    assert.deepEqual(row.lastVoiceMessageAt, future); assert.deepEqual(row.lastUserMessageAt, future);
+    const stale = await conversation.acceptReplyAndMaybeClaimGeneration(data("stale", { readiness: { ready: true, expectedLastMessageId: null } }));
+    assert.equal(stale.outcome, "stale");
+    const third = await conversation.acceptReplyAndMaybeClaimGeneration(data("I will visit again", { readiness: { ready: true, expectedLastMessageId: second.message.id } }));
+    assert.ok(third.generationClaim);
+    assert.equal((await prisma.userResponse.findUniqueOrThrow({ where: { userPromptId: session.id } })).voiceFileId, "first-voice");
+    assert.equal(await prisma.streakDay.count({ where: { userId: user.id } }), 1);
+    const activity = await prisma.userActivityDay.findMany({ where: { userId: user.id } });
+    assert.equal(activity.reduce((sum, item) => sum + item.messageCount, 0), 3);
+    assert.equal(activity.reduce((sum, item) => sum + item.textMessageCount, 0), 2);
+    assert.equal(activity.reduce((sum, item) => sum + item.voiceMessageCount, 0), 1);
+    const { AdminUsersService } = require("../dist/modules/admin/admin-users.service");
+    const audit = { runSuccess: async (_meta, callback) => prisma.$transaction(async tx => (await callback(tx)).result) };
+    await new AdminUsersService(prisma, audit).resetUserProgress(user.id);
+    row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    assert.equal(row.lastUserMessageAt, null); assert.equal(row.lastVoiceMessageAt, null);
+    assert.equal(await prisma.userPrompt.count({ where: { userId: user.id } }), 0);
+    assert.equal(await prisma.userActivityDay.count({ where: { userId: user.id } }), 0);
+  });
+
+  await t.test("failed text closure rolls back message, activity, state, streak and report", async () => {
+    const user = await createUser(), prompt = await createPrompt("text-rollback");
+    const session = await createSentUserPrompt(user.id, prompt.id);
+    const conversation = new ConversationService(prisma, { qualifyConversation: async () => { throw new Error("force_text_rollback"); } });
+    const data = index => ({ userId: user.id, userPromptId: session.id, content: `Reply ${index}`, telegramUpdateId: nextTelegramId(), generationRequestKey: `text-${index}` });
+    await conversation.acceptReplyAndMaybeClaimGeneration(data(1)); await conversation.acceptReplyAndMaybeClaimGeneration(data(2));
+    const before = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    await assert.rejects(conversation.acceptReplyAndMaybeClaimGeneration(data(3)), /force_text_rollback/);
+    assert.equal(await prisma.conversationMessage.count({ where: { userPromptId: session.id } }), 2);
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    assert.deepEqual(after.lastUserMessageAt, before.lastUserMessageAt); assert.equal(after.lastVoiceMessageAt, null);
+    assert.equal((await prisma.userActivityDay.findFirstOrThrow({ where: { userId: user.id } })).messageCount, 2);
+    assert.equal((await prisma.userActivityDay.findFirstOrThrow({ where: { userId: user.id } })).textMessageCount, 2);
+    assert.equal((await prisma.userPrompt.findUniqueOrThrow({ where: { id: session.id } })).conversationStatus, "open");
+    assert.equal(await prisma.userResponse.count({ where: { userPromptId: session.id } }), 0);
+  });
+
+  await t.test("manual report racing with third text creates one generation owner and streak day", async () => {
+    const user = await createUser(), prompt = await createPrompt("text-report-race"), streak = new StreakService(prisma);
+    const session = await createSentUserPrompt(user.id, prompt.id);
+    const conversation = new ConversationService(prisma, streak), response = new ResponseService(prisma, streak);
+    const data = index => ({ userId: user.id, userPromptId: session.id, content: `Reply ${index}`, telegramUpdateId: nextTelegramId(), generationRequestKey: `race-text-${index}` });
+    await conversation.acceptReplyAndMaybeClaimGeneration(data(1)); const second = await conversation.acceptReplyAndMaybeClaimGeneration(data(2));
+    const [automatic, manual] = await Promise.all([
+      conversation.acceptReplyAndMaybeClaimGeneration({ ...data(3), readiness: { ready: true, expectedLastMessageId: second.message.id } }),
+      response.claimGeneration({ userId: user.id, userPromptId: session.id, voiceFileId: null, generationRequestKey: "manual-race", expectedLastMessageId: second.message.id }),
+    ]);
+    assert.equal(Number(!!automatic.generationClaim) + Number(manual.outcome === "claimed"), 1);
+    assert.equal(await prisma.userResponse.count({ where: { userPromptId: session.id } }), 1);
+    assert.equal((await prisma.userResponse.findUniqueOrThrow({ where: { userPromptId: session.id } })).voiceFileId, null);
+    assert.equal(await prisma.streakDay.count({ where: { userId: user.id } }), 1);
+  });
+
+  await t.test("text retention purges content and preserves separate voice activity", async () => {
+    const user = await createUser({ lastVoiceMessageAt: new Date("2026-07-01T12:00:00Z") }), prompt = await createPrompt("text-retention");
+    const session = await createSentUserPrompt(user.id, prompt.id), streak = new StreakService(prisma);
+    const conversation = new ConversationService(prisma, streak), response = new ResponseService(prisma, streak);
+    await conversation.acceptReplyAndMaybeClaimGeneration({ userId: user.id, userPromptId: session.id, content: "Private typed answer", telegramUpdateId: nextTelegramId(), generationRequestKey: "retention-text" });
+    const claim = await response.claimGeneration({ userId: user.id, userPromptId: session.id, voiceFileId: null, generationRequestKey: "text-report" });
+    await response.completeGeneration({ responseId: claim.claim.responseId, claimToken: claim.claim.claimToken, transcript: "Private typed answer", analysis: "{}", analysisVersion: 1, analysisKind: "model", overallScore: 8, chunks: ["Private report"] });
+    const usageBefore = await prisma.userActivityDay.findMany({ where: { userId: user.id } });
+    const before = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    const old = new Date(Date.now() - 32 * 86400000);
+    await prisma.userPrompt.update({ where: { id: session.id }, data: { conversationClosedAt: old } });
+    await new DataRetentionService(prisma, { retention: { closedConversationContentDays: 30, rateLimitDays: 30, errorLogsDays: 30 } }).cleanup();
+    assert.equal(await prisma.conversationMessage.count({ where: { userPromptId: session.id } }), 0);
+    const result = await prisma.userResponse.findUniqueOrThrow({ where: { userPromptId: session.id } });
+    assert.equal(result.transcript, null); assert.equal(result.analysis, null); assert.ok(result.sensitiveDataPurgedAt);
+    const purgedReport = await response.claimGeneration({ userId: user.id, userPromptId: session.id, voiceFileId: null, generationRequestKey: "after-text-purge" });
+    assert.equal(purgedReport.outcome, "generated"); assert.ok(purgedReport.response.sensitiveDataPurgedAt);
+    assert.equal(await prisma.reportDeliveryRequest.count({ where: { userResponseId: result.id } }), 0);
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    assert.deepEqual(after.lastUserMessageAt, before.lastUserMessageAt); assert.deepEqual(after.lastVoiceMessageAt, before.lastVoiceMessageAt);
+    assert.deepEqual(await prisma.userActivityDay.findMany({ where: { userId: user.id } }), usageBefore);
+  });
+
 });
 
 test.after(async () => {

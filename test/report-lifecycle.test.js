@@ -92,7 +92,7 @@ function createFakePrisma(seed = {}) {
     },
     async $executeRaw(query, ...taggedValues) {
       const values = taggedValues;
-      const [userId, localDateValue, firstActivityAt, lastActivityAt] = values;
+      const [userId, localDateValue, firstActivityAt, lastActivityAt, textMessageCount = 0, voiceMessageCount = 0] = values;
       const localDate = typeof localDateValue === "string"
         ? new Date(localDateValue + "T00:00:00.000Z")
         : localDateValue;
@@ -101,8 +101,10 @@ function createFakePrisma(seed = {}) {
         existing.firstActivityAt = new Date(Math.min(existing.firstActivityAt.getTime(), firstActivityAt.getTime()));
         existing.lastActivityAt = new Date(Math.max(existing.lastActivityAt.getTime(), lastActivityAt.getTime()));
         existing.messageCount += 1;
+        existing.textMessageCount = (existing.textMessageCount ?? 0) + textMessageCount;
+        existing.voiceMessageCount = (existing.voiceMessageCount ?? 0) + voiceMessageCount;
       } else {
-        state.userActivityDays.push({ userId, localDate, firstActivityAt, lastActivityAt, messageCount: 1 });
+        state.userActivityDays.push({ userId, localDate, firstActivityAt, lastActivityAt, messageCount: 1, textMessageCount, voiceMessageCount });
       }
       state.operations.push({ type: "execute", model: "userActivityDay", text: sqlText(query), values });
       return 1;
@@ -415,15 +417,15 @@ test("voice acceptance deduplicates before the closed gate and the third voice c
   const fake = createFakePrisma({ userPrompts: [prompt()] });
   const service = new ConversationService(fake, createStreakStub());
 
-  const first = await service.acceptVoiceAndMaybeClaimGeneration(voiceData(1));
-  const second = await service.acceptVoiceAndMaybeClaimGeneration(voiceData(2));
-  const duplicateWhileOpen = await service.acceptVoiceAndMaybeClaimGeneration(voiceData(2));
+  const first = await service.acceptReplyAndMaybeClaimGeneration(voiceData(1));
+  const second = await service.acceptReplyAndMaybeClaimGeneration(voiceData(2));
+  const duplicateWhileOpen = await service.acceptReplyAndMaybeClaimGeneration(voiceData(2));
   assert.equal(duplicateWhileOpen.outcome, "duplicate");
   assert.equal(duplicateWhileOpen.message.id, second.message.id);
   assert.equal(fake.state.conversationMessages.length, 2);
-  const third = await service.acceptVoiceAndMaybeClaimGeneration(voiceData(3));
-  const duplicateAfterClose = await service.acceptVoiceAndMaybeClaimGeneration(voiceData(2));
-  const fourth = await service.acceptVoiceAndMaybeClaimGeneration(voiceData(4));
+  const third = await service.acceptReplyAndMaybeClaimGeneration(voiceData(3));
+  const duplicateAfterClose = await service.acceptReplyAndMaybeClaimGeneration(voiceData(2));
+  const fourth = await service.acceptReplyAndMaybeClaimGeneration(voiceData(4));
 
   assert.equal(first.outcome, "accepted");
   assert.equal(first.generationClaim, null);
@@ -482,7 +484,7 @@ test("third voice rolls back its message and prompt closure when response creati
   });
 
   await assert.rejects(
-    new ConversationService(fake, createStreakStub()).acceptVoiceAndMaybeClaimGeneration(voiceData(3)),
+    new ConversationService(fake, createStreakStub()).acceptReplyAndMaybeClaimGeneration(voiceData(3)),
     /injected response create failure/,
   );
 
@@ -518,7 +520,7 @@ test("manual-first and auto-first serialization both produce exactly one generat
     voiceFileId: "voice-1",
     generationRequestKey: "manual",
   });
-  const afterManual = await manualConversation.acceptVoiceAndMaybeClaimGeneration(voiceData(2));
+  const afterManual = await manualConversation.acceptReplyAndMaybeClaimGeneration(voiceData(2));
 
   assert.equal(manual.outcome, "claimed");
   assert.equal(afterManual.outcome, "closed");
@@ -543,9 +545,9 @@ test("manual-first and auto-first serialization both produce exactly one generat
   });
   const autoConversation = new ConversationService(autoFake, autoStreak);
   const autoResponse = new ResponseService(autoFake, autoStreak);
-  await autoConversation.acceptVoiceAndMaybeClaimGeneration(voiceData(1));
-  await autoConversation.acceptVoiceAndMaybeClaimGeneration(voiceData(2));
-  const auto = await autoConversation.acceptVoiceAndMaybeClaimGeneration(voiceData(3));
+  await autoConversation.acceptReplyAndMaybeClaimGeneration(voiceData(1));
+  await autoConversation.acceptReplyAndMaybeClaimGeneration(voiceData(2));
+  const auto = await autoConversation.acceptReplyAndMaybeClaimGeneration(voiceData(3));
   const afterAuto = await autoResponse.claimGeneration({
     userId: "user-1",
     userPromptId: "prompt-1",
@@ -904,9 +906,9 @@ test("insufficient third voice remains open and a sufficient fourth voice closes
     qualifications += 1;
     return { currentStreak: 1, longestStreak: 1, isNewRecord: true };
   } }));
-  await service.acceptVoiceAndMaybeClaimGeneration(voiceData(1));
-  const second = await service.acceptVoiceAndMaybeClaimGeneration(voiceData(2));
-  const third = await service.acceptVoiceAndMaybeClaimGeneration(voiceData(3, {
+  await service.acceptReplyAndMaybeClaimGeneration(voiceData(1));
+  const second = await service.acceptReplyAndMaybeClaimGeneration(voiceData(2));
+  const third = await service.acceptReplyAndMaybeClaimGeneration(voiceData(3, {
     readiness: { ready: false, expectedLastMessageId: second.message.id },
   }));
   assert.equal(third.outcome, "accepted");
@@ -914,13 +916,13 @@ test("insufficient third voice remains open and a sufficient fourth voice closes
   assert.equal(fake.state.userPrompts[0].conversationStatus, "open");
   assert.equal(fake.state.userResponses.length, 0);
   assert.equal(qualifications, 0);
-  const fourth = await service.acceptVoiceAndMaybeClaimGeneration(voiceData(4, {
+  const fourth = await service.acceptReplyAndMaybeClaimGeneration(voiceData(4, {
     readiness: { ready: true, expectedLastMessageId: third.message.id },
   }));
   assert.ok(fourth.generationClaim);
   assert.equal(fake.state.userPrompts[0].conversationStatus, "closed");
   assert.equal(qualifications, 1);
-  const duplicate = await service.acceptVoiceAndMaybeClaimGeneration(voiceData(4));
+  const duplicate = await service.acceptReplyAndMaybeClaimGeneration(voiceData(4));
   assert.equal(duplicate.outcome, "duplicate");
   assert.equal(qualifications, 1);
 });
@@ -929,7 +931,7 @@ test("stale readiness cannot accept a voice or close a manually reported convers
   const fake = createFakePrisma({ userPrompts: [prompt()], conversationMessages: [message()] });
   const streak = createStreakStub({ qualifyConversation: async () => assert.fail("must stay open") });
   const conversation = new ConversationService(fake, streak);
-  assert.deepEqual(await conversation.acceptVoiceAndMaybeClaimGeneration(voiceData(2, {
+  assert.deepEqual(await conversation.acceptReplyAndMaybeClaimGeneration(voiceData(2, {
     readiness: { ready: true, expectedLastMessageId: "outdated" },
   })), { outcome: "stale" });
   assert.equal(fake.state.conversationMessages.length, 1);

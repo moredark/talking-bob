@@ -1,8 +1,10 @@
+import { PracticeReplyWorkflowService } from "./practice-reply-workflow.service";
 import { Module } from "@nestjs/common";
 import { TelegramService } from "./telegram.service";
 import {
   StartHandler,
   VoiceHandler,
+  TextHandler,
   ReportHandler,
   SettingsHandler,
   ScheduleHandler,
@@ -37,9 +39,11 @@ import { SpokenReplyService } from "./spoken-reply.service";
     TelegramService,
     StartHandler,
     VoiceHandler,
+    TextHandler,
     ReportHandler,
     SpokenReplyService,
     ReportWorkflowService,
+    PracticeReplyWorkflowService,
     SettingsHandler,
     ScheduleHandler,
   ],

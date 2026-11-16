@@ -28,14 +28,14 @@ test("broadcast options accept independent JSON periods and action", () => {
 test("new audience conditions compose with legacy filters", () => {
   const filters = { ...FILTERS, noVoiceForDays: 14, scheduledDeliveryWithinDays: 7 };
   const where = broadcastAudienceWhere(filters, NOW);
-  assert.deepEqual(where.OR[0], { lastUserMessageAt: null });
-  assert.equal(where.OR[1].lastUserMessageAt.lt.toISOString(), "2026-07-27T10:00:00.000Z");
+  assert.deepEqual(where.OR[0], { lastVoiceMessageAt: null });
+  assert.equal(where.OR[1].lastVoiceMessageAt.lt.toISOString(), "2026-07-27T10:00:00.000Z");
   assert.equal(where.userPrompts.some.source, "scheduled");
   assert.equal(where.userPrompts.some.deliveryStatus, "sent");
   assert.equal(where.userPrompts.some.sentAt.gte.toISOString(), "2026-08-03T10:00:00.000Z");
   const sql = broadcastSnapshotInsert("11111111-1111-4111-8111-111111111111", filters, NOW);
   const text = sql.strings.join("?").replace(/\s+/g, " ");
-  assert.match(text, /lastUserMessageAt.*IS NULL OR.*lastUserMessageAt.*</);
+  assert.match(text, /lastVoiceMessageAt.*IS NULL OR.*lastVoiceMessageAt.*</);
   assert.match(text, /EXISTS \( SELECT 1 FROM "user_prompts"/);
   assert.match(text, /"source" = 'scheduled'/);
   assert.match(text, /"deliveryStatus" = 'sent'/);

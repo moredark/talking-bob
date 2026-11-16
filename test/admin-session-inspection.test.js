@@ -182,6 +182,7 @@ test("reset progress deletes provider traces before dependent sessions", async (
     where: { id: userId },
     data: {
       lastUserMessageAt: null,
+      lastVoiceMessageAt: null,
       currentStreak: 0,
       longestStreak: 0,
       lastStreakLocalDate: null,

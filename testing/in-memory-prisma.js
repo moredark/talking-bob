@@ -104,7 +104,7 @@ function createInMemoryPrisma({ prompts = [] } = {}) {
     },
     async $executeRaw(query, ...taggedValues) {
       const { values } = sqlParts(query, taggedValues);
-      const [userId, localDateValue, firstActivityAt, lastActivityAt] = values;
+      const [userId, localDateValue, firstActivityAt, lastActivityAt, textMessageCount = 0, voiceMessageCount = 0] = values;
       const localDate = typeof localDateValue === "string"
         ? new Date(localDateValue + "T00:00:00.000Z")
         : localDateValue;
@@ -113,8 +113,10 @@ function createInMemoryPrisma({ prompts = [] } = {}) {
         existing.firstActivityAt = new Date(Math.min(existing.firstActivityAt.getTime(), firstActivityAt.getTime()));
         existing.lastActivityAt = new Date(Math.max(existing.lastActivityAt.getTime(), lastActivityAt.getTime()));
         existing.messageCount += 1;
+        existing.textMessageCount = (existing.textMessageCount ?? 0) + textMessageCount;
+        existing.voiceMessageCount = (existing.voiceMessageCount ?? 0) + voiceMessageCount;
       } else {
-        state.userActivityDays.push({ userId, localDate, firstActivityAt, lastActivityAt, messageCount: 1 });
+        state.userActivityDays.push({ userId, localDate, firstActivityAt, lastActivityAt, messageCount: 1, textMessageCount, voiceMessageCount });
       }
       record("upsert", "userActivityDay", { userId, localDate });
       return 1;

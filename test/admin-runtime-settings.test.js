@@ -1,3 +1,4 @@
+const { createVoiceHandler } = require("./support/practice-reply-test-harness");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
@@ -237,7 +238,7 @@ test("LLM snapshots analysis tokens once across retry and reads follow-up tokens
 test("voice limits are captured once before user-flow awaits", async () => {
   const { VoiceHandler } = require("../dist/modules/telegram/handlers/voice.handler.js");
   const calls = [];
-  const handler = new VoiceHandler({}, {}, {}, {}, {}, {}, {}, {
+  const handler = createVoiceHandler({}, {}, {}, {}, {}, {}, {}, {
     telegramBotToken: "token",
     voice: { maxDurationSeconds: 300, maxFileSizeBytes: 1000 },
     externalRequests: { telegramFileDownload: { timeoutMs: 1000, maxResponseBytes: 1000 } },

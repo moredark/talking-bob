@@ -26,7 +26,7 @@ export function broadcastAudienceWhere(filters: BroadcastFilters, now: Date): Pr
   }
   if (filters.noVoiceForDays !== undefined) {
     const cutoff = new Date(now.getTime() - filters.noVoiceForDays * DAY_MS);
-    where.OR = [{ lastUserMessageAt: null }, { lastUserMessageAt: { lt: cutoff } }];
+    where.OR = [{ lastVoiceMessageAt: null }, { lastVoiceMessageAt: { lt: cutoff } }];
   }
   if (filters.scheduledDeliveryWithinDays !== undefined) {
     const cutoff = new Date(now.getTime() - filters.scheduledDeliveryWithinDays * DAY_MS);

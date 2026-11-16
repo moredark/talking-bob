@@ -70,7 +70,12 @@ flowchart LR
   Контракт: [schedule-reengagement](../../openspec/specs/schedule-reengagement/spec.md).
   Порядок обновления и read-only gates: [runbook](../practice-schedule-rollout.md).
 - Analytics возвращает Moscow calendar buckets и retention-safe facts без raw
-  сообщений, transcript, analysis или provider response.
+  сообщений, transcript, analysis или provider response. Additive `replyUsage`
+  читает format counters из `UserActivityDay`: уникальные пользователи за период,
+  пересечение текста/голоса, доля, принятые реплики и дневная динамика. Отдельный
+  coverage marker обозначает начало точной разбивки. Dashboard показывает метрики
+  с прежним переключателем 7/30/90 дней и доступной таблицей. Контракт:
+  [text-practice-replies](../../openspec/specs/text-practice-replies/spec.md).
 
 Admin runtime — непривилегированный nginx: он раздаёт собранную SPA, делает
 fallback на `index.html` для deep links и проксирует same-origin `/api/*` в

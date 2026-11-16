@@ -6,6 +6,10 @@ const { AdminAnalyticsService } = require("../dist/modules/admin/admin-analytics
 const { AdminAnalyticsQueryPipe } = require("../dist/modules/admin/admin-validation.pipe");
 const { getCalendarDayBuckets } = require("../dist/shared/time/timezone");
 
+function emptyReplyUsage() {
+  return [{ localDate: null, totalUsers: 0n, textUsers: 0n, voiceUsers: 0n, mixedUsers: 0n, textReplies: 0n, voiceReplies: 0n, completeFrom: new Date("2026-08-05T00:00:00Z") }];
+}
+
 function routePipes(methodName) {
   const metadata = Reflect.getMetadata("__routeArguments__", AdminController, methodName) ?? {};
   return Object.values(metadata).flatMap((argument) => argument.pipes ?? []);
@@ -56,12 +60,25 @@ test("analytics response fills zero days and shapes funnel, retention, scores, A
   const sql = [];
   const transactions = [];
   const prisma = {
-    $queryRaw: async (query) => { sql.push(query.strings.join("?")); return results.shift(); },
+    $queryRaw: async (query) => { sql.push(query.strings.join("?")); return results.shift() ?? [
+      { ...emptyReplyUsage()[0], totalUsers: 2n, textUsers: 1n, voiceUsers: 2n, mixedUsers: 1n, textReplies: 3n, voiceReplies: 4n },
+      { localDate: "2026-08-08", totalUsers: 1n, textUsers: 1n, voiceUsers: 0n, mixedUsers: 0n, textReplies: 2n, voiceReplies: 0n },
+      { localDate: "2026-08-10", totalUsers: 2n, textUsers: 1n, voiceUsers: 2n, mixedUsers: 1n, textReplies: 1n, voiceReplies: 4n },
+    ]; },
     $transaction: async (queries, options) => { transactions.push(options); return Promise.all(queries); },
   };
   const response = await new AdminAnalyticsService(prisma).getAnalytics(7, now);
 
   assert.equal(response.version, 1);
+  assert.deepEqual(response.replyUsage.users, { total: 2, text: 1, voice: 2, mixed: 1, textSharePct: 50 });
+  assert.deepEqual(response.replyUsage.replies, { total: 7, text: 3, voice: 4 });
+  assert.equal(response.replyUsage.daily.length, 7);
+  assert.deepEqual(response.replyUsage.daily[0], { localDate: "2026-08-04", users: { total: 0, text: 0, voice: 0, mixed: 0, textSharePct: null }, replies: { total: 0, text: 0, voice: 0 } });
+  assert.equal(response.replyUsage.daily[4].users.text, 1);
+  assert.equal(response.replyUsage.daily[6].users.text, 1);
+  assert.equal(response.replyUsage.users.text, 1, "period unique users must not be summed from daily users");
+  assert.equal(response.replyUsage.coverage.status, "partial");
+
   assert.equal(response.timezone, "Europe/Moscow");
   assert.deepEqual(response.coverage, {
     status: "partial",
@@ -82,7 +99,7 @@ test("analytics response fills zero days and shapes funnel, retention, scores, A
   assert.equal(response.ai.latency.daily[0].averageMs, null);
   assert.equal(response.broadcasts.recipients.deliveryRatePct, 70);
   assert.deepEqual(response.broadcasts.errorCodes, [{ code: "telegram_403", count: 1 }, { code: "other", count: 1 }]);
-  assert.equal(sql.length, 10, "query count must stay constant regardless of days");
+  assert.equal(sql.length, 11, "query count must stay constant regardless of days");
   assert.deepEqual(transactions, [{ isolationLevel: "RepeatableRead" }]);
   assert.ok(sql.every((query) => !query.includes("conversation_messages") && !query.includes("report_delivery_requests")));
   assert.ok(sql.every((query) => !query.includes("ur.analysis")));
@@ -95,13 +112,15 @@ test("zero denominators and immature retention return null, never misleading zer
   const emptySummary = { coverageFrom: null, analyticsCompleteFrom: new Date("2026-07-01T00:00:00.000Z"), total: 0n, succeeded: 0n, empty: 0n, failed: 0n, averageMs: null, p50Ms: null, p95Ms: null, inputCalls: 0n, inputSum: null, outputCalls: 0n, outputSum: null, totalCalls: 0n, totalSum: null };
   const queue = [[], [{ sent: 0n, message: 0n, closed: 0n, generated: 0n, delivered: 0n }], [], [{ generatedCount: 0n, scoredCount: 0n, invalidCount: 0n, fallbackCount: 0n, averageScore: null }], [], [], [emptySummary], [], [{ total: 0n, completed: 0n, completedWithErrors: 0n, cancelled: 0n, recipients: 0n, sent: 0n, failed: 0n, ambiguous: 0n, skipped: 0n }], []];
   const response = await new AdminAnalyticsService({
-    $queryRaw: async () => queue.shift(),
+    $queryRaw: async () => queue.shift() ?? emptyReplyUsage(),
     $transaction: async (queries, options) => {
       assert.equal(options.isolationLevel, "RepeatableRead");
       return Promise.all(queries);
     },
   }).getAnalytics(7, new Date("2026-08-10T12:00:00.000Z"));
   assert.equal(response.funnel.responseRatePct, null);
+  assert.equal(response.replyUsage.users.textSharePct, null);
+  assert.equal(response.replyUsage.users.total, 0);
   assert.equal(response.funnel.stages[0].rateFromSentPct, null);
   assert.equal(response.retention.summary.d1, null);
   assert.equal(response.ai.outcomes.successRatePct, null);
@@ -121,7 +140,7 @@ test("analytics coverage explicitly distinguishes complete, partial, and unavail
 
     return (await new AdminAnalyticsService({
 
-      $queryRaw: async () => queue.shift(),
+      $queryRaw: async () => queue.shift() ?? emptyReplyUsage(),
 
       $transaction: async (queries) => Promise.all(queries),
 

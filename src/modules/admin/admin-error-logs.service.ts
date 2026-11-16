@@ -15,7 +15,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 const MAX_INT = 2_147_483_647;
 const SAFE_OPERATIONS = new Set([
   "update.handle", "callback.acknowledge", "runner.start", "runner.run",
-  "start.release_quota", "start.send_welcome", "voice.process", "report.generate",
+  "start.release_quota", "start.send_welcome", "voice.process", "text.process", "report.generate",
   "report.prepare_delivery", "report.persist_attempt", "report.send_chunk",
   "report.persist_success", "transcribe", "analyze_speech", "assess_conversation", "report.readiness", "generate_follow_up",
   "claim.dispatch", "tick", "delivery.bot_unavailable", "delivery.persist_success",

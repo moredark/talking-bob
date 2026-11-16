@@ -7,7 +7,7 @@ import {
 export interface CreateResponseData {
   userId: string;
   userPromptId: string;
-  voiceFileId: string;
+  voiceFileId: string | null;
 }
 
 export interface UpdateResponseData {

@@ -2,13 +2,14 @@ import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database";
 import { getCalendarDayBuckets } from "../../shared/time/timezone";
-import { AdminAnalytics, AnalyticsDays, RetentionPoint, RetentionSummary, TokenUsage } from "./admin.contracts";
+import { AdminAnalytics, AnalyticsDays, RetentionPoint, RetentionSummary, TokenUsage, ReplyUsageMetrics } from "./admin.contracts";
 
 const ANALYTICS_TIMEZONE = "Europe/Moscow" as const;
 const RETENTION_DAYS = [1, 7, 30] as const;
 
 type CountValue = bigint | number | string | null;
 type DailyRow = { localDate: string; newUsers: CountValue; activeUsers: CountValue; promptsSent: CountValue; responsesReceived: CountValue };
+type ReplyUsageRow = { localDate: string | null; totalUsers: CountValue; textUsers: CountValue; voiceUsers: CountValue; mixedUsers: CountValue; textReplies: CountValue; voiceReplies: CountValue; completeFrom: Date };
 type FunnelRow = { sent: CountValue; message: CountValue; closed: CountValue; generated: CountValue; delivered: CountValue };
 type RetentionRow = { localDate: string; cohortSize: CountValue; retainedD1: CountValue; retainedD7: CountValue; retainedD30: CountValue };
 type ScoreSummaryRow = { generatedCount: CountValue; scoredCount: CountValue; invalidCount: CountValue; fallbackCount: CountValue; averageScore: number | string | null };
@@ -32,7 +33,7 @@ export class AdminAnalyticsService {
     const startAt = buckets[0].start;
     const endAt = buckets[buckets.length - 1].end;
 
-    const [dailyRows, funnelRows, retentionRows, scoreRows, topicRows, distributionRows, aiRows, aiDailyRows, broadcastRows, errorCodeRows] = await this.prisma.$transaction([
+    const [dailyRows, funnelRows, retentionRows, scoreRows, topicRows, distributionRows, aiRows, aiDailyRows, broadcastRows, errorCodeRows, replyUsageRows] = await this.prisma.$transaction([
       this.daily(startAt, generatedAt),
       this.funnel(startAt, generatedAt),
       this.retention(startAt, generatedAt),
@@ -43,6 +44,7 @@ export class AdminAnalyticsService {
       this.aiDaily(startAt, generatedAt),
       this.broadcastSummary(startAt, generatedAt),
       this.broadcastErrors(startAt, generatedAt),
+      this.replyUsage(startAt, generatedAt),
     ], { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
 
     const dailyByDate = new Map(dailyRows.map((row) => [row.localDate, row]));
@@ -55,6 +57,9 @@ export class AdminAnalyticsService {
     if (!ai.analyticsCompleteFrom) throw new Error("Analytics coverage marker is missing");
     const coverage = analyticsCoverage(startAt, generatedAt, ai.analyticsCompleteFrom);
     const broadcasts = broadcastRows[0] ?? { total: 0, completed: 0, completedWithErrors: 0, cancelled: 0, recipients: 0, sent: 0, failed: 0, ambiguous: 0, skipped: 0 };
+    const usageSummary = replyUsageRows.find(row => row.localDate === null);
+    if (!usageSummary?.completeFrom) throw new Error("Reply usage coverage marker is missing");
+    const usageByDate = new Map(replyUsageRows.filter(row => row.localDate !== null).map(row => [row.localDate, row]));
     const aiTotal = safeCount(ai.total);
     const recipientTotal = safeCount(broadcasts.recipients);
     const sentRecipients = safeCount(broadcasts.sent);
@@ -66,6 +71,11 @@ export class AdminAnalyticsService {
       days,
       period: { startAt, endAt, observedThrough: generatedAt },
       coverage,
+      replyUsage: {
+        ...replyUsageMetrics(usageSummary),
+        coverage: analyticsCoverage(startAt, generatedAt, usageSummary.completeFrom),
+        daily: buckets.map(bucket => ({ localDate: bucket.localDate, ...replyUsageMetrics(usageByDate.get(bucket.localDate)) })),
+      },
       daily: buckets.map((bucket) => {
         const row = dailyByDate.get(bucket.localDate);
         return {
@@ -115,6 +125,40 @@ export class AdminAnalyticsService {
         errorCodes: errorCodeRows.map((row) => ({ code: row.code, count: safeCount(row.count) })),
       },
     };
+  }
+
+  private replyUsage(startAt: Date, observedThrough: Date) {
+    return this.prisma.$queryRaw<ReplyUsageRow[]>(Prisma.sql`
+      WITH days AS (
+        SELECT "userId", "localDate", "textMessageCount"::bigint AS text_count,
+          "voiceMessageCount"::bigint AS voice_count
+        FROM user_activity_days
+        WHERE "localDate" >= (${startAt} AT TIME ZONE 'Europe/Moscow')::date
+          AND "localDate" <= (${observedThrough} AT TIME ZONE 'Europe/Moscow')::date
+          AND "firstActivityAt" < ${observedThrough}
+          AND ${observedThrough} > (SELECT "replyUsageCompleteFrom" FROM admin_analytics_coverage WHERE id = 'durable_facts')
+      ), users_in_period AS (
+        SELECT "userId", SUM(text_count) AS text_count, SUM(voice_count) AS voice_count
+        FROM days GROUP BY "userId"
+      ), totals AS (
+        SELECT NULL::text AS "localDate",
+          COUNT(*) FILTER (WHERE text_count + voice_count > 0) AS "totalUsers",
+          COUNT(*) FILTER (WHERE text_count > 0) AS "textUsers",
+          COUNT(*) FILTER (WHERE voice_count > 0) AS "voiceUsers",
+          COUNT(*) FILTER (WHERE text_count > 0 AND voice_count > 0) AS "mixedUsers",
+          COALESCE(SUM(text_count), 0) AS "textReplies", COALESCE(SUM(voice_count), 0) AS "voiceReplies"
+        FROM users_in_period
+        UNION ALL
+        SELECT "localDate"::text,
+          COUNT(*) FILTER (WHERE text_count + voice_count > 0),
+          COUNT(*) FILTER (WHERE text_count > 0), COUNT(*) FILTER (WHERE voice_count > 0),
+          COUNT(*) FILTER (WHERE text_count > 0 AND voice_count > 0),
+          COALESCE(SUM(text_count), 0), COALESCE(SUM(voice_count), 0)
+        FROM days GROUP BY "localDate"
+      )
+      SELECT totals.*, (SELECT "replyUsageCompleteFrom" FROM admin_analytics_coverage WHERE id = 'durable_facts') AS "completeFrom"
+      FROM totals
+    `);
   }
 
   private daily(startAt: Date, observedThrough: Date) {
@@ -350,4 +394,13 @@ function addIsoDays(localDate: string, days: number): string {
 
 function emptyAiRow(): AiSummaryRow {
   return { coverageFrom: null, analyticsCompleteFrom: null, total: 0, succeeded: 0, empty: 0, failed: 0, averageMs: null, p50Ms: null, p95Ms: null, inputCalls: 0, inputSum: null, outputCalls: 0, outputSum: null, totalCalls: 0, totalSum: null };
+}
+
+function replyUsageMetrics(row?: ReplyUsageRow): ReplyUsageMetrics {
+  const total = safeCount(row?.totalUsers), text = safeCount(row?.textUsers);
+  const textReplies = safeCount(row?.textReplies), voiceReplies = safeCount(row?.voiceReplies);
+  return {
+    users: { total, text, voice: safeCount(row?.voiceUsers), mixed: safeCount(row?.mixedUsers), textSharePct: percentage(text, total) },
+    replies: { total: safeCount(textReplies + voiceReplies), text: textReplies, voice: voiceReplies },
+  };
 }

@@ -1,3 +1,4 @@
+const { PracticeReplyWorkflowService } = require("../dist/modules/telegram/practice-reply-workflow.service");
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { MODULE_METADATA } = require("@nestjs/common/constants");
@@ -59,6 +60,7 @@ test("TelegramModule wires the shared report workflow into both handlers", () =>
   const providers = Reflect.getMetadata(MODULE_METADATA.PROVIDERS, TelegramModule);
 
   assert.equal(reportDependencies[8], ReportWorkflowService);
-  assert.equal(voiceDependencies[6], ReportWorkflowService);
+  assert.equal(voiceDependencies[0], PracticeReplyWorkflowService);
+  assert.ok(Reflect.getMetadata("design:paramtypes", PracticeReplyWorkflowService).includes(ReportWorkflowService));
   assert.equal(providers.includes(ReportWorkflowService), true);
 });

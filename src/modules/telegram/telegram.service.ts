@@ -29,6 +29,7 @@ import { ReportHandler } from "./handlers/report.handler";
 import { SettingsHandler } from "./handlers/settings.handler";
 import { ScheduleHandler } from "./handlers/schedule.handler";
 import { StartHandler } from "./handlers/start.handler";
+import { TextHandler } from "./handlers/text.handler";
 import { VoiceHandler } from "./handlers/voice.handler";
 
 class TelegramRuntimeClosedError extends Error {
@@ -77,6 +78,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     private readonly observability?: ObservabilityContextService,
     @Optional() private readonly broadcastDispatcher?: BroadcastDispatcher,
     @Optional() private readonly scheduleHandler?: ScheduleHandler,
+    @Optional() private readonly textHandler?: TextHandler,
   ) {
     this.bot = new Bot(runtimeConfig.telegramBotToken, {
       client: {
@@ -163,7 +165,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
     this.bot.use((ctx, next) => {
       const text = ctx.message && "text" in ctx.message ? ctx.message.text : "";
-      if ((text ?? "").startsWith("/") || (ctx.callbackQuery?.data && !ctx.callbackQuery.data.startsWith("schedule_time_"))) {
+      if ((text ?? "").trimStart().startsWith("/") || (ctx.callbackQuery?.data && !ctx.callbackQuery.data.startsWith("schedule_time_"))) {
         this.scheduleHandler?.cancelTimeInput(ctx);
       }
       return next();
@@ -181,6 +183,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         if (!(await this.scheduleHandler!.handleTimeText(ctx))) await next();
       });
     }
+    this.bot.on("message:text", (ctx) => this.textHandler?.handle(ctx));
     this.bot.on("message:voice", (ctx) => this.voiceHandler.handle(ctx));
 
     this.bot.callbackQuery("report", (ctx) => this.reportHandler.handle(ctx));
