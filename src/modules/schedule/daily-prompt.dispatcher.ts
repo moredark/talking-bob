@@ -57,7 +57,7 @@ export class DailyPromptDispatcher implements IMessageDispatcher {
     const chatId = claim.user.telegramId.toString();
     const text =
       `🎤 Тема дня: ${claim.prompt.topic}\n\n` +
-      "Ответь голосовым сообщением на английском.";
+      "Ответь голосовым сообщением или текстом на английском.";
 
     const voiceCaption = buildVoiceCaption(claim.prompt.topic);
     if (!claim.prompt.audioFileId || !voiceCaption) {
